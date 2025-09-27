@@ -8,6 +8,7 @@ from . import heaters
 
 class PIDCalibrate:
     def __init__(self, config):
+        self.config = config
         self.printer = config.get_printer()
         gcode = self.printer.lookup_object('gcode')
         gcode.register_command('PID_CALIBRATE', self.cmd_PID_CALIBRATE,
@@ -34,7 +35,7 @@ class PIDCalibrate:
         if write_file:
             calibrate.write_file('/tmp/heattest.txt')
         if calibrate.check_busy(0., 0., 0.):
-            raise gcmd.error("pid_calibrate interrupted")
+            raise gcmd.error('{"code": "key7", "msg": "pid_calibrate interrupted"}')
         # Log and report results
         Kp, Ki, Kd = calibrate.calc_final_pid()
         logging.info("Autotune: final: Kp=%f Ki=%f Kd=%f", Kp, Ki, Kd)
@@ -43,11 +44,27 @@ class PIDCalibrate:
             "The SAVE_CONFIG command will update the printer config file\n"
             "with these parameters and restart the printer." % (Kp, Ki, Kd))
         # Store results for SAVE_CONFIG
+        Kp_name = 'pid_Kp'
+        Ki_name = 'pid_Ki'
+        Kd_name = 'pid_Kd'
+        PID_PARAM_BASE = 255.
+        high_temp_value = self.config.getsection('extruder').getint('high_temp_value', default=280)
+        if heater_name == 'extruder' and target > high_temp_value:
+            Kp_name = 'pid_Kp_high_temp'
+            Ki_name = 'pid_Ki_high_temp'
+            Kd_name = 'pid_Kd_high_temp'
+            heater.control.pid_calibrate_Kp_ht = float("%.3f" % Kp) / PID_PARAM_BASE
+            heater.control.pid_calibrate_Ki_ht = float("%.3f" % Ki) / PID_PARAM_BASE
+            heater.control.pid_calibrate_Kd_ht = float("%.3f" % Kd) / PID_PARAM_BASE
+        elif heater_name == 'extruder' and target <= high_temp_value:
+            heater.control.pid_calibrate_Kp = float("%.3f" % Kp) / PID_PARAM_BASE
+            heater.control.pid_calibrate_Ki = float("%.3f" % Ki) / PID_PARAM_BASE
+            heater.control.pid_calibrate_Kd = float("%.3f" % Kd) / PID_PARAM_BASE
         configfile = self.printer.lookup_object('configfile')
         configfile.set(heater_name, 'control', 'pid')
-        configfile.set(heater_name, 'pid_Kp', "%.3f" % (Kp,))
-        configfile.set(heater_name, 'pid_Ki', "%.3f" % (Ki,))
-        configfile.set(heater_name, 'pid_Kd', "%.3f" % (Kd,))
+        configfile.set(heater_name, Kp_name, "%.3f" % (Kp,))
+        configfile.set(heater_name, Ki_name, "%.3f" % (Ki,))
+        configfile.set(heater_name, Kd_name, "%.3f" % (Kd,))
 
 TUNE_PID_DELTA = 5.0
 

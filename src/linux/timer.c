@@ -122,6 +122,15 @@ timer_kick(void)
     timer_settime(TimerInfo.t_alarm, TIMER_ABSTIME, &it, NULL);
 }
 
+// Implement simple early-boot delay mechanism
+void
+udelay(uint32_t usecs)
+{
+    uint32_t end = timer_read_time() + timer_from_us(usecs);
+    while (timer_is_before(timer_read_time(), end))
+        ;
+}
+
 #define TIMER_IDLE_REPEAT_COUNT 100
 #define TIMER_REPEAT_COUNT 20
 

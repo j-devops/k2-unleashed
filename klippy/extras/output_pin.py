@@ -7,9 +7,10 @@
 PIN_MIN_TIME = 0.100
 RESEND_HOST_TIME = 0.300 + PIN_MIN_TIME
 MAX_SCHEDULE_TIME = 5.0
-
+import logging
 class PrinterOutputPin:
     def __init__(self, config):
+        self.config = config
         self.printer = config.get_printer()
         ppins = self.printer.lookup_object('pins')
         self.is_pwm = config.getboolean('pwm', False)
@@ -50,13 +51,52 @@ class PrinterOutputPin:
                 'shutdown_value', 0., minval=0., maxval=self.scale) / self.scale
             self.mcu_pin.setup_start_value(self.last_value, self.shutdown_value)
             pin_name = config.get_name().split()[1]
+
             gcode = self.printer.lookup_object('gcode')
             gcode.register_mux_command("SET_PIN", "PIN", pin_name,
                                        self.cmd_SET_PIN,
                                        desc=self.cmd_SET_PIN_help)
+            self.heaters = self.printer.load_object(config,"heaters")
+
+            # if pin_name == "power":
+            #     self.power_timer = self.reactor.register_timer(
+            #         self.checkpwm, self.reactor.NOW+10)
+            #     self.ispweron = False
+    def set_poewon(self,value):
+
+        value /= self.scale
+        cycle_time = self.default_cycle_time
+
+        toolhead = self.printer.lookup_object('toolhead')
+        toolhead.register_lookahead_callback(
+            lambda print_time: self._set_pin(print_time, value, cycle_time))
+
+
+        # toolhead = self.printer.lookup_object('toolhead')
+        # toolhead.register_lookahead_callback(
+        #     lambda print_time: self._set_pin(print_time, value, 0))
+    def checkpwm(self, eventtime):
+        systime = self.reactor.monotonic()
+        for heater in self.heaters.heaters.values():
+
+            eventtime = self.reactor.monotonic()
+            if heater.name == "heater_bed" :
+                if heater.check_busy(eventtime) :
+                    if self.ispweron == False and heater.target_temp != 0:
+                        self.set_poewon(0)
+                        self.ispweron = True
+
+                else:
+                    if self.ispweron == True:
+                        self.ispweron = False
+                        self.set_poewon(1)
+                        return systime + 10
+        return systime + 3
     def get_status(self, eventtime):
         return {'value': self.last_value}
     def _set_pin(self, print_time, value, cycle_time, is_resend=False):
+
+
         if value == self.last_value and cycle_time == self.last_cycle_time:
             if not is_resend:
                 return
@@ -65,14 +105,19 @@ class PrinterOutputPin:
             self.mcu_pin.set_pwm(print_time, value, cycle_time)
         else:
             self.mcu_pin.set_digital(print_time, value)
+            pin_name = self.config.get_name().split()[1]
+            if pin_name.startswith("motor_"):
+                logging.info("_set_pin pin_name=%s value=%s" % (pin_name, value))
         self.last_value = value
         self.last_cycle_time = cycle_time
         self.last_print_time = print_time
         if self.resend_interval and self.resend_timer is None:
             self.resend_timer = self.reactor.register_timer(
                 self._resend_current_val, self.reactor.NOW)
+
     cmd_SET_PIN_help = "Set the value of an output pin"
     def cmd_SET_PIN(self, gcmd):
+
         value = gcmd.get_float('VALUE', minval=0., maxval=self.scale)
         value /= self.scale
         cycle_time = gcmd.get_float('CYCLE_TIME', self.default_cycle_time,
@@ -80,8 +125,11 @@ class PrinterOutputPin:
         if not self.is_pwm and value not in [0., 1.]:
             raise gcmd.error("Invalid pin value")
         toolhead = self.printer.lookup_object('toolhead')
-        toolhead.register_lookahead_callback(
-            lambda print_time: self._set_pin(print_time, value, cycle_time))
+        systime = self.reactor.monotonic()
+        print_time=self.mcu_pin.get_mcu().estimated_print_time(systime)
+        self._set_pin(print_time+0.1, value, cycle_time)
+        # toolhead.register_lookahead_callback(
+        #     lambda print_time: self._set_pin(print_time, value, cycle_time))
 
     def _resend_current_val(self, eventtime):
         if self.last_value == self.shutdown_value:

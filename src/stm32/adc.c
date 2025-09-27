@@ -147,7 +147,7 @@ need_delay:
 uint16_t
 gpio_adc_read(struct gpio_adc g)
 {
-    ADC_TypeDef *adc = g.adc;
+	ADC_TypeDef *adc = g.adc;
     adc->SR = ~ADC_SR_STRT;
     return adc->DR;
 }

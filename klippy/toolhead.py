@@ -3,108 +3,21 @@
 # Copyright (C) 2016-2021  Kevin O'Connor <kevin@koconnor.net>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
-import math, logging, importlib
+import math, logging, importlib, os, json
 import mcu, chelper, kinematics.extruder
-
+from extras.base_info import base_dir
+import time
+import inspect
+import mymodule.mymovie as mymovie
+import numpy as np
+import ctypes
+import cProfile
+import pstats
 # Common suffixes: _d is distance (in mm), _v is velocity (in
 #   mm/second), _v2 is velocity squared (mm^2/s^2), _t is time (in
 #   seconds), _r is ratio (scalar between 0.0 and 1.0)
 
 # Class to track each move request
-class Move:
-    def __init__(self, toolhead, start_pos, end_pos, speed):
-        self.toolhead = toolhead
-        self.start_pos = tuple(start_pos)
-        self.end_pos = tuple(end_pos)
-        self.accel = toolhead.max_accel
-        self.junction_deviation = toolhead.junction_deviation
-        self.timing_callbacks = []
-        velocity = min(speed, toolhead.max_velocity)
-        self.is_kinematic_move = True
-        self.axes_d = axes_d = [end_pos[i] - start_pos[i] for i in (0, 1, 2, 3)]
-        self.move_d = move_d = math.sqrt(sum([d*d for d in axes_d[:3]]))
-        if move_d < .000000001:
-            # Extrude only move
-            self.end_pos = (start_pos[0], start_pos[1], start_pos[2],
-                            end_pos[3])
-            axes_d[0] = axes_d[1] = axes_d[2] = 0.
-            self.move_d = move_d = abs(axes_d[3])
-            inv_move_d = 0.
-            if move_d:
-                inv_move_d = 1. / move_d
-            self.accel = 99999999.9
-            velocity = speed
-            self.is_kinematic_move = False
-        else:
-            inv_move_d = 1. / move_d
-        self.axes_r = [d * inv_move_d for d in axes_d]
-        self.min_move_t = move_d / velocity
-        # Junction speeds are tracked in velocity squared.  The
-        # delta_v2 is the maximum amount of this squared-velocity that
-        # can change in this move.
-        self.max_start_v2 = 0.
-        self.max_cruise_v2 = velocity**2
-        self.delta_v2 = 2.0 * move_d * self.accel
-        self.max_smoothed_v2 = 0.
-        self.smooth_delta_v2 = 2.0 * move_d * toolhead.max_accel_to_decel
-    def limit_speed(self, speed, accel):
-        speed2 = speed**2
-        if speed2 < self.max_cruise_v2:
-            self.max_cruise_v2 = speed2
-            self.min_move_t = self.move_d / speed
-        self.accel = min(self.accel, accel)
-        self.delta_v2 = 2.0 * self.move_d * self.accel
-        self.smooth_delta_v2 = min(self.smooth_delta_v2, self.delta_v2)
-    def move_error(self, msg="Move out of range"):
-        ep = self.end_pos
-        m = "%s: %.3f %.3f %.3f [%.3f]" % (msg, ep[0], ep[1], ep[2], ep[3])
-        return self.toolhead.printer.command_error(m)
-    def calc_junction(self, prev_move):
-        if not self.is_kinematic_move or not prev_move.is_kinematic_move:
-            return
-        # Allow extruder to calculate its maximum junction
-        extruder_v2 = self.toolhead.extruder.calc_junction(prev_move, self)
-        # Find max velocity using "approximated centripetal velocity"
-        axes_r = self.axes_r
-        prev_axes_r = prev_move.axes_r
-        junction_cos_theta = -(axes_r[0] * prev_axes_r[0]
-                               + axes_r[1] * prev_axes_r[1]
-                               + axes_r[2] * prev_axes_r[2])
-        if junction_cos_theta > 0.999999:
-            return
-        junction_cos_theta = max(junction_cos_theta, -0.999999)
-        sin_theta_d2 = math.sqrt(0.5*(1.0-junction_cos_theta))
-        R_jd = sin_theta_d2 / (1. - sin_theta_d2)
-        # Approximated circle must contact moves no further away than mid-move
-        tan_theta_d2 = sin_theta_d2 / math.sqrt(0.5*(1.0+junction_cos_theta))
-        move_centripetal_v2 = .5 * self.move_d * tan_theta_d2 * self.accel
-        prev_move_centripetal_v2 = (.5 * prev_move.move_d * tan_theta_d2
-                                    * prev_move.accel)
-        # Apply limits
-        self.max_start_v2 = min(
-            R_jd * self.junction_deviation * self.accel,
-            R_jd * prev_move.junction_deviation * prev_move.accel,
-            move_centripetal_v2, prev_move_centripetal_v2,
-            extruder_v2, self.max_cruise_v2, prev_move.max_cruise_v2,
-            prev_move.max_start_v2 + prev_move.delta_v2)
-        self.max_smoothed_v2 = min(
-            self.max_start_v2
-            , prev_move.max_smoothed_v2 + prev_move.smooth_delta_v2)
-    def set_junction(self, start_v2, cruise_v2, end_v2):
-        # Determine accel, cruise, and decel portions of the move distance
-        half_inv_accel = .5 / self.accel
-        accel_d = (cruise_v2 - start_v2) * half_inv_accel
-        decel_d = (cruise_v2 - end_v2) * half_inv_accel
-        cruise_d = self.move_d - accel_d - decel_d
-        # Determine move velocities
-        self.start_v = start_v = math.sqrt(start_v2)
-        self.cruise_v = cruise_v = math.sqrt(cruise_v2)
-        self.end_v = end_v = math.sqrt(end_v2)
-        # Determine time spent in each portion of move (time is the
-        # distance divided by average velocity)
-        self.accel_t = accel_d / ((start_v + cruise_v) * 0.5)
-        self.cruise_t = cruise_d / cruise_v
-        self.decel_t = decel_d / ((end_v + cruise_v) * 0.5)
 
 LOOKAHEAD_FLUSH_TIME = 0.250
 
@@ -116,6 +29,7 @@ class MoveQueue:
         self.queue = []
         self.junction_flush = LOOKAHEAD_FLUSH_TIME
     def reset(self):
+        mymovie.Py_move_queue_del(len(self.queue))
         del self.queue[:]
         self.junction_flush = LOOKAHEAD_FLUSH_TIME
     def set_flush_time(self, flush_time):
@@ -126,61 +40,41 @@ class MoveQueue:
         return None
     def flush(self, lazy=False):
         self.junction_flush = LOOKAHEAD_FLUSH_TIME
-        update_flush_count = lazy
+        # update_flush_count = lazy
         queue = self.queue
         flush_count = len(queue)
-        # Traverse queue from last to first move and determine maximum
-        # junction speed assuming the robot comes to a complete stop
-        # after the last move.
-        delayed = []
-        next_end_v2 = next_smoothed_v2 = peak_cruise_v2 = 0.
-        for i in range(flush_count-1, -1, -1):
-            move = queue[i]
-            reachable_start_v2 = next_end_v2 + move.delta_v2
-            start_v2 = min(move.max_start_v2, reachable_start_v2)
-            reachable_smoothed_v2 = next_smoothed_v2 + move.smooth_delta_v2
-            smoothed_v2 = min(move.max_smoothed_v2, reachable_smoothed_v2)
-            if smoothed_v2 < reachable_smoothed_v2:
-                # It's possible for this move to accelerate
-                if (smoothed_v2 + move.smooth_delta_v2 > next_smoothed_v2
-                    or delayed):
-                    # This move can decelerate or this is a full accel
-                    # move after a full decel move
-                    if update_flush_count and peak_cruise_v2:
-                        flush_count = i
-                        update_flush_count = False
-                    peak_cruise_v2 = min(move.max_cruise_v2, (
-                        smoothed_v2 + reachable_smoothed_v2) * .5)
-                    if delayed:
-                        # Propagate peak_cruise_v2 to any delayed moves
-                        if not update_flush_count and i < flush_count:
-                            mc_v2 = peak_cruise_v2
-                            for m, ms_v2, me_v2 in reversed(delayed):
-                                mc_v2 = min(mc_v2, ms_v2)
-                                m.set_junction(min(ms_v2, mc_v2), mc_v2
-                                               , min(me_v2, mc_v2))
-                        del delayed[:]
-                if not update_flush_count and i < flush_count:
-                    cruise_v2 = min((start_v2 + reachable_start_v2) * .5
-                                    , move.max_cruise_v2, peak_cruise_v2)
-                    move.set_junction(min(start_v2, cruise_v2), cruise_v2
-                                      , min(next_end_v2, cruise_v2))
-            else:
-                # Delay calculating this move until peak_cruise_v2 is known
-                delayed.append((move, start_v2, next_end_v2))
-            next_end_v2 = start_v2
-            next_smoothed_v2 = smoothed_v2
-        if update_flush_count or not flush_count:
+        if not flush_count:
             return
+        # if flush_count > 150:
+        #     profile = cProfile.Profile()
+        #     profile.enable()
+        starttime = time.time()
+        flush_count=mymovie.Py_move_queue_flush_cal(flush_count,lazy)
+        # print(f"flush_count:{flush_count} time:{time.time()-starttime}")
         # Generate step times for all moves ready to be flushed
-        self.toolhead._process_moves(queue[:flush_count])
-        # Remove processed moves from the queue
-        del queue[:flush_count]
+        if flush_count:
+            # starttime = time.time()
+            self.toolhead._process_moves(queue[:flush_count])
+            # print(f"_process_moves flush_count:{flush_count} time:{time.time()-starttime}")
+            # Remove processed moves from the queue
+            mymovie.Py_move_queue_del(flush_count)
+            print(f"c++ flush:{flush_count} time:{time.time()-starttime}")
+            del queue[:flush_count]
+        # if flush_count > 150:
+        #     profile.disable()
+        #     stats = pstats.Stats(profile)
+        #     stats.sort_stats('cumulative')
+        #     stats.print_stats(20)
     def add_move(self, move):
-        self.queue.append(move)
+        self.queue.append([move,[]])
+        # mymovie.Py_move_queue_add(move)
         if len(self.queue) == 1:
             return
-        move.calc_junction(self.queue[-2])
+        # pre_move = self.queue[-2][0]
+        # if not move.is_kinematic_move or not pre_move.is_kinematic_move:
+        #     return
+        # extruder_v2 = self.toolhead.extruder.calc_junction(pre_move, move)
+        # move.calc_junction(pre_move,extruder_v2)
         self.junction_flush -= move.min_move_t
         if self.junction_flush <= 0.:
             # Enough moves have been queued to reach the target flush time.
@@ -198,6 +92,21 @@ class DripModeEndSignal(Exception):
 # Main code to track events (and their timing) on the printer toolhead
 class ToolHead:
     def __init__(self, config):
+        # double_array_type = ctypes.c_double * 14
+        self._double_array = [0.0,0.0,0.0,0.0,
+                             0.0,0.0,0.0,0.0,
+                             0.0,0.0,0.0,0.0,
+                             0.0,0.0]
+        # n_items = len(self._double_array)
+
+        # self.double_array = (ctypes.c_double * n_items)(*self._double_array)
+        # self.double_array_ptr_int =ctypes.cast(self.double_array, ctypes.c_void_p).value
+
+        self.double_array = np.array(self._double_array, dtype=np.float64)
+        self.double_array_ptr_int = self.double_array.ctypes.data
+        mymovie.Py_set_cur_move_addr(self.double_array_ptr_int)
+        self.config = config
+        self.qmode_flag = 0
         self.printer = config.get_printer()
         self.reactor = self.printer.get_reactor()
         self.all_mcus = [
@@ -208,17 +117,27 @@ class ToolHead:
             self.can_pause = False
         self.move_queue = MoveQueue(self)
         self.commanded_pos = [0., 0., 0., 0.]
+        self.double_array[4]=self.commanded_pos[0]
+        self.double_array[5]=self.commanded_pos[1]
+        self.double_array[6]=self.commanded_pos[2]
+        self.double_array[7]=self.commanded_pos[3]
         self.printer.register_event_handler("klippy:shutdown",
                                             self._handle_shutdown)
         # Velocity and acceleration control
-        self.max_velocity = config.getfloat('max_velocity', above=0.)
-        self.max_accel = config.getfloat('max_accel', above=0.)
+        self.__max_velocity = config.getfloat('max_velocity', above=0.)
+        self.double_array[1]=self.__max_velocity
+        self.__max_accel = config.getfloat('max_accel', above=0.)
+        self.double_array[0]=self.__max_accel
         self.requested_accel_to_decel = config.getfloat(
-            'max_accel_to_decel', self.max_accel * 0.5, above=0.)
-        self.max_accel_to_decel = self.requested_accel_to_decel
+            'max_accel_to_decel', self.__max_accel * 0.5, above=0.)
+        self.__max_accel_to_decel = self.requested_accel_to_decel
+        self.double_array[3]=self.__max_accel_to_decel
         self.square_corner_velocity = config.getfloat(
             'square_corner_velocity', 5., minval=0.)
-        self.junction_deviation = 0.
+        self.square_corner_max_velocity = config.getfloat(
+            'square_corner_max_velocity', 200., minval=0.)
+        self.__junction_deviation = 0.
+        self.double_array[2]=self.__junction_deviation
         self._calc_junction_deviation()
         # Print time tracking
         self.buffer_time_low = config.getfloat(
@@ -246,11 +165,14 @@ class ToolHead:
         self.trapq = ffi_main.gc(ffi_lib.trapq_alloc(), ffi_lib.trapq_free)
         self.trapq_append = ffi_lib.trapq_append
         self.trapq_finalize_moves = ffi_lib.trapq_finalize_moves
+        self.trapq_append_from_moveq = ffi_lib.trapq_append_from_moveq
         self.step_generators = []
         # Create kinematics class
         gcode = self.printer.lookup_object('gcode')
         self.Coord = gcode.Coord
         self.extruder = kinematics.extruder.DummyExtruder(self.printer)
+        if hasattr(self.extruder, 'info_array_addr_int'):
+            mymovie.Py_set_extruder_info(self.extruder.info_array_addr_int)
         kin_name = config.get('kinematics')
         try:
             mod = importlib.import_module('kinematics.' + kin_name)
@@ -264,6 +186,7 @@ class ToolHead:
             logging.exception(msg)
             raise config.error(msg)
         # Register commands
+        gcode.register_command('SET_G29_FLAG', self.cmd_SET_G29_FLAG)
         gcode.register_command('G4', self.cmd_G4)
         gcode.register_command('M400', self.cmd_M400)
         gcode.register_command('SET_VELOCITY_LIMIT',
@@ -271,10 +194,45 @@ class ToolHead:
                                desc=self.cmd_SET_VELOCITY_LIMIT_help)
         gcode.register_command('M204', self.cmd_M204)
         # Load some default modules
-        modules = ["gcode_move", "homing", "idle_timeout", "statistics",
+        modules = ["gcode_move", "homing", "idle_timeout", "statistics_ext",
                    "manual_probe", "tuning_tower"]
         for module_name in modules:
             self.printer.load_object(config, module_name)
+        self.z_pos_filepath = os.path.join(base_dir, "creality/userdata/config/z_pos.json")
+        self.z_pos = self.get_z_pos()
+        if self.config.has_section("motor_control") and self.config.getsection('motor_control').getint('switch')==1:
+            self.printer.register_event_handler("klippy:ready", self.printer.lookup_object('motor_control').set_motor_pin)
+        self.G29_flag = False
+    def cmd_SET_G29_FLAG(self, gcmd):
+        value = gcmd.get_int('VALUE', 0)
+        if value == 1:
+            self.G29_flag = True
+        else:
+            self.G29_flag = False
+    def get_max_accel(self):
+        return self.__max_accel
+    def set_max_accel(self, value):
+        self.__max_accel = value
+        self.double_array[0]=value
+    def get_max_velocity_only(self):
+        return self.__max_velocity
+    def set_max_velocity(self, value):
+        self.__max_velocity = value
+        self.double_array[1]=value
+    def get_max_accel_to_decel(self):
+        return self.__max_accel_to_decel
+    def set_max_accel_to_decel(self, value):
+        self.__max_accel_to_decel = value
+        self.double_array[3]=value
+    def get_z_pos(self):
+        z_pos = 0
+        if os.path.exists(self.z_pos_filepath):
+            try:
+                with open(self.z_pos_filepath, "r") as f:
+                    z_pos = float(json.loads(f.read()).get("z_pos", 0))
+            except Exception as err:
+                logging.error(err)
+        return z_pos
     # Print time tracking
     def _update_move_time(self, next_print_time):
         batch_time = MOVE_BATCH_TIME
@@ -314,25 +272,33 @@ class ToolHead:
             self._calc_print_time()
         # Queue moves into trapezoid motion queue (trapq)
         next_move_time = self.print_time
-        for move in moves:
-            if move.is_kinematic_move:
-                self.trapq_append(
-                    self.trapq, next_move_time,
-                    move.accel_t, move.cruise_t, move.decel_t,
-                    move.start_pos[0], move.start_pos[1], move.start_pos[2],
-                    move.axes_r[0], move.axes_r[1], move.axes_r[2],
-                    move.start_v, move.cruise_v, move.accel)
-            if move.axes_d[3]:
-                self.extruder.move(next_move_time, move)
-            next_move_time = (next_move_time + move.accel_t
-                              + move.cruise_t + move.decel_t)
-            for cb in move.timing_callbacks:
-                cb(next_move_time)
+        # start=time.time()
+        return_value=self.trapq_append_from_moveq(self.trapq,self.extruder.trapq,next_move_time,mymovie.Py_get_moveq_only_data_buffer(),len(moves))
+        if return_value.extru_last_position < 109999999:
+            self.extruder.last_position=return_value.extru_last_position
+        # for move in moves:
+        #     _move=move[0]
+        #     _move_cb=move[1]
+        #     if _move.is_kinematic_move:
+        #         self.trapq_append(
+        #             self.trapq, next_move_time,
+        #             _move.accel_t, _move.cruise_t, _move.decel_t,
+        #             _move.start_pos[0], _move.start_pos[1], _move.start_pos[2],
+        #             _move.axes_r[0], _move.axes_r[1], _move.axes_r[2],
+        #             _move.start_v, _move.cruise_v, _move.accel)
+        #     if _move.axes_d[3]:
+        #         self.extruder.move(next_move_time, _move)
+        #     next_move_time = (next_move_time + _move.accel_t
+        #                       + _move.cruise_t + _move.decel_t)
+            # for cb in _move_cb:
+            #     cb(next_move_time)
+        # time.sleep(0.100)
+        # print(f"trapq_append:{time.time()-start}")
         # Generate steps for moves
         if self.special_queuing_state:
-            self._update_drip_move_time(next_move_time)
-        self._update_move_time(next_move_time)
-        self.last_kin_move_time = next_move_time
+            self._update_drip_move_time(return_value.next_move_time)
+        self._update_move_time(return_value.next_move_time)
+        self.last_kin_move_time = return_value.next_move_time
     def flush_step_generation(self):
         # Transition from "Flushed"/"Priming"/main state to "Flushed" state
         self.move_queue.flush()
@@ -406,17 +372,191 @@ class ToolHead:
         ffi_lib.trapq_set_position(self.trapq, self.print_time,
                                    newpos[0], newpos[1], newpos[2])
         self.commanded_pos[:] = newpos
+        self.double_array[4]=self.commanded_pos[0]
+        self.double_array[5]=self.commanded_pos[1]
+        self.double_array[6]=self.commanded_pos[2]
+        self.double_array[7]=self.commanded_pos[3]
         self.kin.set_position(newpos, homing_axes)
         self.printer.send_event("toolhead:set_position")
-    def move(self, newpos, speed):
-        move = Move(self, self.commanded_pos, newpos, speed)
-        if not move.move_d:
+    def record_z_pos(self, commanded_pos_z):
+        if(self.kin.__class__.__name__ == "CoreXYKinematics"):
+            if(self.kin.get_status_for_record_z_pos()):
+                if abs(commanded_pos_z-self.z_pos) > 5:
+                    self.z_pos = commanded_pos_z
+                    with open(self.z_pos_filepath, "w") as f:
+                        f.write(json.dumps({"z_pos": commanded_pos_z}))
+                        f.flush()
+                    print_stats = self.printer.lookup_object('print_stats', None)
+                    print_stats.z_pos = self.z_pos
+                    logging.info("record_z_pos:%s" % commanded_pos_z)
             return
-        if move.is_kinematic_move:
-            self.kin.check_move(move)
-        if move.axes_d[3]:
-            self.extruder.check_move(move)
-        self.commanded_pos[:] = move.end_pos
+        else:
+            curtime = self.printer.get_reactor().monotonic()
+            kin_status = self.kin.get_status(curtime)
+        if ('z' in kin_status['homed_axes']):
+            try:
+                if abs(commanded_pos_z-self.z_pos) > 5:
+                    self.z_pos = commanded_pos_z
+                    with open(self.z_pos_filepath, "w") as f:
+                        f.write(json.dumps({"z_pos": commanded_pos_z}))
+                        f.flush()
+                    print_stats = self.printer.lookup_object('print_stats', None)
+                    print_stats.z_pos = self.z_pos
+                    logging.info("record_z_pos:%s" % commanded_pos_z)
+            except Exception as err:
+                logging.error(err)
+    def check_move_out_of_range(self, ep):
+        toolhead = self.printer.lookup_object('toolhead')
+        code_key = "key243"
+        min_x = toolhead.kin.limits[0][0]
+        max_x = toolhead.kin.limits[0][1]
+        min_y = toolhead.kin.limits[1][0]
+        max_y = toolhead.kin.limits[1][1]
+        min_z = toolhead.kin.limits[2][0]
+        max_z = toolhead.kin.limits[2][1]
+        if min_x > ep[0] or ep[0] > max_x:
+            code_key = "key585"
+        elif min_y > ep[1] or ep[1] > max_y:
+            code_key = "key586"
+        elif min_z > ep[2] or ep[2] > max_z:
+            code_key = "key587"
+        msg="Move out of range"
+        logging.info("stepper xyz min_x:%s max_x:%s|min_y:%s max_y:%s|min_z:%s max_z:%s, toolhead.kin.limits:%s" % (min_x, max_x, min_y, max_y, min_z, max_z, str(toolhead.kin.limits)))
+        m = """{"code":"%s","msg":"%s: %.3f %.3f %.3f [%.3f]", "values":[%.3f, %.3f, %.3f, %.3f]}""" % (
+            code_key, msg, ep[0], ep[1], ep[2], ep[3], ep[0], ep[1], ep[2], ep[3])
+        return m
+    def simple_move(self, newpos):
+        # print("get #################################################move: %s %s" % (newpos, speed))
+        if newpos[2] < self.kin.limits[2][1]:
+            self.record_z_pos(newpos[2])
+        # starttime=time.time()
+        
+        
+        # self.double_array[12]=speed
+        # print(f"time cost of move: {time.time()-starttime}")
+        
+        # starttime=time.time()
+        move = mymovie.PyMove()
+        # print(f"time cost of PyMove: {time.time()-starttime}")
+        
+        if self.double_array[13]==0:
+            self.commanded_pos[:] = newpos
+        elif self.double_array[13]==1:
+            self.commanded_pos[3] = newpos[3]
+        elif self.double_array[13]==-4:
+            print_stats = self.printer.lookup_object('print_stats')
+            gcode = self.printer.lookup_object('gcode')
+            m = """{"code":"key111", "msg": "Extrude below minimum temp, See the 'min_extrude_temp' config option for details", "values": []}"""
+            if print_stats.state == "printing" and self.extrude_below_min_temp_err_is_report==False:
+                gcode._respond_error(m)
+                self.extrude_below_min_temp_err_is_report = True
+                gcode.respond_info("state:%s pause_start:%s" % (self.printer.lookup_object('print_stats').state, self.printer.lookup_object('pause_resume').pause_start))
+                if self.printer.lookup_object('print_stats').state == "printing" and self.printer.lookup_object('pause_resume').pause_start == False:
+                    self.printer.lookup_object('gcode').run_script_from_command("PAUSE")
+            elif print_stats.state == "standby":
+            # elif print_stats.state != "printing":
+                gcode._respond_error(m)
+            return
+            # raise self.printer.command_error("""{"code":"key111", "msg": "Extrude below minimum temp\nSee the 'min_extrude_temp' config option for details", "values": []}""")
+        elif self.double_array[13]==-2:
+            raise self.printer.command_error("Must home axis first")
+        elif self.double_array[13]==-3:
+            m = self.check_move_out_of_range(newpos)
+            # self.printer.lookup_object('gcode')._respond_error(m)
+            print_stats = self.printer.lookup_object('print_stats')
+            if print_stats.state == "printing" and self.printer.lookup_object('pause_resume').pause_start == False and self.printer.lookup_object('virtual_sdcard').is_move_out_of_range_in_printing==False:
+                self.printer.lookup_object('virtual_sdcard').is_move_out_of_range_in_printing=True
+                self.printer.lookup_object('gcode')._respond_error(m)
+            elif print_stats.state != "printing" and print_stats.state != "paused":
+                self.printer.lookup_object('gcode')._respond_error(m)
+            return
+            # raise self.printer.command_error(m)
+            # raise self.printer.command_error("Move out of range")
+        elif self.double_array[13]==-1:
+            return
+        elif self.double_array[13]==-5:
+            raise self.printer.command_error("Extrude only move too long")
+        elif self.double_array[13]==-6:
+            raise self.printer.command_error("""{"code":"key112", "msg": "Move exceeds maximum extrusion (%.3fmm^2 vs %.3fmm^2)\nSee the 'max_extrude_cross_section' config option for details", "values": [%.3f, %.3f]}""")
+        # if not move.move_d:
+        #     return
+        # if move.is_kinematic_move:
+        #     self.kin.check_move(move)
+        # if move.axes_d[3]:
+        #     self.extruder.check_move(move)
+        # self.commanded_pos[:] = move.end_pos
+        self.move_queue.add_move(move)
+        if self.print_time > self.need_check_stall:
+            # print(f"before _check_stall: {self.print_time} {self.need_check_stall} {self.special_queuing_state}")
+            self._check_stall()
+            # print(f"after _check_stall: {self.print_time} {self.need_check_stall} {self.special_queuing_state}")
+    def move(self, newpos, speed):
+        # print("get #################################################move: %s %s" % (newpos, speed))
+        if newpos[2] < self.kin.limits[2][1]:
+            self.record_z_pos(newpos[2])
+        # starttime=time.time()
+        # print(f"move:{self.commanded_pos} {newpos} {speed}")
+        self.double_array[4]=self.commanded_pos[0]
+        self.double_array[5]=self.commanded_pos[1]
+        self.double_array[6]=self.commanded_pos[2]
+        self.double_array[7]=self.commanded_pos[3]
+        self.double_array[8]=newpos[0]
+        self.double_array[9]=newpos[1]
+        self.double_array[10]=newpos[2]
+        self.double_array[11]=newpos[3]
+        self.double_array[12]=speed
+        # print(f"time cost of move: {time.time()-starttime}")
+        
+        # starttime=time.time()
+        move = mymovie.PyMove()
+        # print(f"time cost of PyMove: {time.time()-starttime}")
+        # print(f"return:{self.double_array[13]}")
+        if self.double_array[13]==0:
+            self.commanded_pos[:] = newpos
+        elif self.double_array[13]==1:
+            self.commanded_pos[3] = newpos[3]
+        elif self.double_array[13]==-4:
+            print_stats = self.printer.lookup_object('print_stats')
+            gcode = self.printer.lookup_object('gcode')
+            m = """{"code":"key111", "msg": "Extrude below minimum temp, See the 'min_extrude_temp' config option for details", "values": []}"""
+            if print_stats.state == "printing" and self.extrude_below_min_temp_err_is_report==False:
+                gcode._respond_error(m)
+                self.extrude_below_min_temp_err_is_report = True
+                gcode.respond_info("state:%s pause_start:%s" % (self.printer.lookup_object('print_stats').state, self.printer.lookup_object('pause_resume').pause_start))
+                if self.printer.lookup_object('print_stats').state == "printing" and self.printer.lookup_object('pause_resume').pause_start == False:
+                    self.printer.lookup_object('gcode').run_script_from_command("PAUSE")
+            elif print_stats.state == "standby":
+            # elif print_stats.state != "printing":
+                gcode._respond_error(m)
+            return
+            # raise self.printer.command_error("""{"code":"key111", "msg": "Extrude below minimum temp\nSee the 'min_extrude_temp' config option for details", "values": []}""")
+        elif self.double_array[13]==-2:
+            raise self.printer.command_error("Must home axis first")
+        elif self.double_array[13]==-3:
+            m = self.check_move_out_of_range(newpos)
+            # self.printer.lookup_object('gcode')._respond_error(m)
+            print_stats = self.printer.lookup_object('print_stats')
+            if print_stats.state == "printing" and self.printer.lookup_object('pause_resume').pause_start == False and self.printer.lookup_object('virtual_sdcard').is_move_out_of_range_in_printing==False:
+                self.printer.lookup_object('virtual_sdcard').is_move_out_of_range_in_printing=True
+                self.printer.lookup_object('gcode')._respond_error(m)
+            elif print_stats.state != "printing" and print_stats.state != "paused":
+                self.printer.lookup_object('gcode')._respond_error(m)
+            return
+            # raise self.printer.command_error(m)
+            # raise self.printer.command_error("Move out of range")
+        elif self.double_array[13]==-1:
+            return
+        elif self.double_array[13]==-5:
+            raise self.printer.command_error("Extrude only move too long")
+        elif self.double_array[13]==-6:
+            raise self.printer.command_error("""{"code":"key112", "msg": "Move exceeds maximum extrusion (%.3fmm^2 vs %.3fmm^2)\nSee the 'max_extrude_cross_section' config option for details", "values": [%.3f, %.3f]}""")
+        # if not move.move_d:
+        #     return
+        # if move.is_kinematic_move:
+        #     self.kin.check_move(move)
+        # if move.axes_d[3]:
+        #     self.extruder.check_move(move)
+        # self.commanded_pos[:] = move.end_pos
         self.move_queue.add_move(move)
         if self.print_time > self.need_check_stall:
             self._check_stall()
@@ -441,7 +581,10 @@ class ToolHead:
             eventtime = self.reactor.pause(eventtime + 0.100)
     def set_extruder(self, extruder, extrude_pos):
         self.extruder = extruder
+        if hasattr(self.extruder, 'info_array_addr_int'):
+            mymovie.Py_set_extruder_info(self.extruder.info_array_addr_int)
         self.commanded_pos[3] = extrude_pos
+        self.double_array[7]=self.commanded_pos[3]
     def get_extruder(self):
         return self.extruder
     # Homing "drip move" handling
@@ -506,10 +649,11 @@ class ToolHead:
                      'estimated_print_time': estimated_print_time,
                      'extruder': self.extruder.get_name(),
                      'position': self.Coord(*self.commanded_pos),
-                     'max_velocity': self.max_velocity,
-                     'max_accel': self.max_accel,
+                     'max_velocity': self.__max_velocity,
+                     'max_accel': self.__max_accel,
                      'max_accel_to_decel': self.requested_accel_to_decel,
-                     'square_corner_velocity': self.square_corner_velocity})
+                     'square_corner_velocity': self.square_corner_velocity,
+                     "G29_flag": self.G29_flag})
         return res
     def _handle_shutdown(self):
         self.can_pause = False
@@ -534,16 +678,18 @@ class ToolHead:
         if last_move is None:
             callback(self.get_last_move_time())
             return
-        last_move.timing_callbacks.append(callback)
+        last_move[1].append(callback)
     def note_kinematic_activity(self, kin_time):
         self.last_kin_move_time = max(self.last_kin_move_time, kin_time)
     def get_max_velocity(self):
-        return self.max_velocity, self.max_accel
+        return self.__max_velocity, self.__max_accel
     def _calc_junction_deviation(self):
         scv2 = self.square_corner_velocity**2
-        self.junction_deviation = scv2 * (math.sqrt(2.) - 1.) / self.max_accel
-        self.max_accel_to_decel = min(self.requested_accel_to_decel,
-                                      self.max_accel)
+        self.__junction_deviation = scv2 * (math.sqrt(2.) - 1.) / self.__max_accel
+        self.double_array[2]=self.__junction_deviation
+        self.__max_accel_to_decel = min(self.requested_accel_to_decel,
+                                      self.__max_accel)
+        self.double_array[3]=self.__max_accel_to_decel
     def cmd_G4(self, gcmd):
         # Dwell
         delay = gcmd.get_float('P', 0., minval=0.) / 1000.
@@ -553,6 +699,21 @@ class ToolHead:
         self.wait_moves()
     cmd_SET_VELOCITY_LIMIT_help = "Set printer velocity limits"
     def cmd_SET_VELOCITY_LIMIT(self, gcmd):
+
+        qmode_max_accel = 0
+        qmode_max_accel_to_decel = 0
+
+        custom_macro = self.printer.lookup_object('custom_macro')
+        self.qmode_flag = custom_macro.qmode_flag
+
+        if self.config.has_section('gcode_macro Qmode'):
+            Qmode = self.config.getsection('gcode_macro Qmode')
+            qmode_max_accel = Qmode.getfloat('variable_max_accel')
+            qmode_max_accel_to_decel = Qmode.getfloat('variable_max_accel_to_decel')
+            # gcmd.respond_info("SET_VELOCITY_LIMIT] qmode_flag={}".format(self.qmode_flag))
+            # gcmd.respond_info("SET_VELOCITY_LIMIT] qmode_max_accel={}".format(qmode_max_accel))
+            # gcmd.respond_info("SET_VELOCITY_LIMIT] qmode_max_accel_to_decel={}".format(qmode_max_accel_to_decel))
+
         max_velocity = gcmd.get_float('VELOCITY', None, above=0.)
         max_accel = gcmd.get_float('ACCEL', None, above=0.)
         square_corner_velocity = gcmd.get_float(
@@ -560,41 +721,73 @@ class ToolHead:
         requested_accel_to_decel = gcmd.get_float(
             'ACCEL_TO_DECEL', None, above=0.)
         if max_velocity is not None:
-            self.max_velocity = max_velocity
+            self.__max_velocity = max_velocity
+            self.double_array[1]=self.__max_velocity
         if max_accel is not None:
-            self.max_accel = max_accel
+            if self.qmode_flag and max_accel > qmode_max_accel:
+                self.__max_accel = qmode_max_accel
+            else:
+                self.__max_accel = max_accel
+            self.double_array[0]=self.__max_accel
+            # gcmd.respond_info("SET_VELOCITY_LIMIT] self.__max_accel={}".format(self.__max_accel))
         if square_corner_velocity is not None:
+            if square_corner_velocity > self.square_corner_max_velocity:
+                square_corner_velocity = self.square_corner_max_velocity
             self.square_corner_velocity = square_corner_velocity
         if requested_accel_to_decel is not None:
-            self.requested_accel_to_decel = requested_accel_to_decel
+            if self.qmode_flag and requested_accel_to_decel > qmode_max_accel_to_decel:
+                self.requested_accel_to_decel = qmode_max_accel_to_decel
+            else:
+                self.requested_accel_to_decel = requested_accel_to_decel
+            # gcmd.respond_info("SET_VELOCITY_LIMIT] self.requested_accel_to_decel={}".format(self.requested_accel_to_decel))
+
         self._calc_junction_deviation()
-        msg = ("max_velocity: %.6f\n"
-               "max_accel: %.6f\n"
-               "max_accel_to_decel: %.6f\n"
-               "square_corner_velocity: %.6f" % (
-                   self.max_velocity, self.max_accel,
-                   self.requested_accel_to_decel,
-                   self.square_corner_velocity))
-        self.printer.set_rollover_info("toolhead", "toolhead: %s" % (msg,))
+        # msg = ("max_velocity: %.6f\n"
+        #        "max_accel: %.6f\n"
+        #        "max_accel_to_decel: %.6f\n"
+        #        "square_corner_velocity: %.6f" % (
+        #            self.max_velocity, self.max_accel,
+        #            self.requested_accel_to_decel,
+        #            self.square_corner_velocity))
+        # self.printer.set_rollover_info("toolhead", "toolhead: %s" % (msg,))
         if (max_velocity is None and
             max_accel is None and
             square_corner_velocity is None and
             requested_accel_to_decel is None):
             gcmd.respond_info(msg, log=False)
     def cmd_M204(self, gcmd):
+        accel_S = int(float(gcmd.get('S', -1)))
+        if accel_S != -1 and accel_S <= 100:
+            accel = 100
+        else:
+            accel = gcmd.get_float('S', None, above=0.)
         # Use S for accel
-        accel = gcmd.get_float('S', None, above=0.)
+        # accel = gcmd.get_float('S', None, above=0.)
+        cmd = "M204 S%s" % accel
         if accel is None:
             # Use minimum of P and T for accel
             p = gcmd.get_float('P', None, above=0.)
             t = gcmd.get_float('T', None, above=0.)
             if p is None or t is None:
-                gcmd.respond_info('Invalid M204 command "%s"'
-                                  % (gcmd.get_commandline(),))
+                gcmd.respond_info("""{"code":"key73", "msg": "Invalid M204 command "%s"", "values": ["%s"]}"""
+                                  % (gcmd.get_commandline(),gcmd.get_commandline()))
                 return
             accel = min(p, t)
-        self.max_accel = accel
+            cmd = "M204 P%s T%s" % (p, t)
+        self.__max_accel = accel
+        self.double_array[0]=self.__max_accel
         self._calc_junction_deviation()
+        v_sd = self.printer.lookup_object('virtual_sdcard', None)
+        print_stats = self.printer.lookup_object('print_stats', None)
+        if print_stats and print_stats.state == "printing" and v_sd and v_sd.count_M204 < 3 and os.path.exists(v_sd.print_file_name_path):
+            v_sd.count_M204 += 1
+            with open(v_sd.print_file_name_path, "r") as f:
+                result = (json.loads(f.read()))
+                result["M204"] = cmd
+            with open(v_sd.print_file_name_path, "w") as f:
+                f.write(json.dumps(result))
+                f.flush()
+            logging.info("Record cmd_M204")
 
 def add_printer_objects(config):
     config.get_printer().add_object('toolhead', ToolHead(config))

@@ -85,6 +85,7 @@ i2c_write(struct i2c_config config, uint8_t write_len, uint8_t *data)
             report_errno("write value i2c", ret);
         try_shutdown("Unable write i2c device");
     }
+    udelay(5 * 1000);
 }
 
 void

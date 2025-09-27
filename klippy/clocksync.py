@@ -4,13 +4,17 @@
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import logging, math
-
+import mymodule.mymovie as mymovie
+import numpy as np
 RTT_AGE = .000010 / (60. * 60.)
 DECAY = 1. / 30.
 TRANSMIT_EXTRA = .001
 
 class ClockSync:
     def __init__(self, reactor):
+        self._sync_array = [0.0]*4
+        self.sync_array = np.array(self._sync_array, dtype=np.float64)
+        self.sync_array_addr_int = self.sync_array.ctypes.data
         self.reactor = reactor
         self.serial = None
         self.get_clock_timer = reactor.register_timer(self._get_clock_event)
@@ -27,15 +31,26 @@ class ClockSync:
         self.clock_avg = self.clock_covariance = 0.
         self.prediction_variance = 0.
         self.last_prediction_time = 0.
+        self.sync_array[0]=self.mcu_freq
+        self.sync_array[1]=self.clock_est[0]
+        self.sync_array[2]=self.clock_est[1]
+        self.sync_array[3]=self.clock_est[2]
     def connect(self, serial):
         self.serial = serial
         self.mcu_freq = serial.msgparser.get_constant_float('CLOCK_FREQ')
+        self.sync_array[0]=self.mcu_freq
         # Load initial clock and frequency
         params = serial.send_with_response('get_uptime', 'uptime')
+        self.time_avg = params['#sent_time']
+        if not self.time_avg:
+            params = serial.send_with_response('get_uptime', 'uptime')
+            self.time_avg = params['#sent_time']
         self.last_clock = (params['high'] << 32) | params['clock']
         self.clock_avg = self.last_clock
-        self.time_avg = params['#sent_time']
         self.clock_est = (self.time_avg, self.clock_avg, self.mcu_freq)
+        self.sync_array[1]=self.clock_est[0]
+        self.sync_array[2]=self.clock_est[1]
+        self.sync_array[3]=self.clock_est[2]
         self.prediction_variance = (.001 * self.mcu_freq)**2
         # Enable periodic get_clock timer
         for i in range(8):
@@ -50,7 +65,11 @@ class ClockSync:
     def connect_file(self, serial, pace=False):
         self.serial = serial
         self.mcu_freq = serial.msgparser.get_constant_float('CLOCK_FREQ')
+        self.sync_array[0]=self.mcu_freq
         self.clock_est = (0., 0., self.mcu_freq)
+        self.sync_array[1]=self.clock_est[0]
+        self.sync_array[2]=self.clock_est[1]
+        self.sync_array[3]=self.clock_est[2]
         freq = 1000000000000.
         if pace:
             freq = self.mcu_freq
@@ -116,20 +135,24 @@ class ClockSync:
         new_freq = self.clock_covariance / self.time_variance
         pred_stddev = math.sqrt(self.prediction_variance)
         self.serial.set_clock_est(new_freq, self.time_avg + TRANSMIT_EXTRA,
-                                  int(self.clock_avg - 3. * pred_stddev), clock)
+                                  mymovie.Py_fast_convert_to_int(self.clock_avg - 3. * pred_stddev), clock)
         self.clock_est = (self.time_avg + self.min_half_rtt,
                           self.clock_avg, new_freq)
+        self.sync_array[1]=self.clock_est[0]
+        self.sync_array[2]=self.clock_est[1]
+        self.sync_array[3]=self.clock_est[2]
         #logging.debug("regr %.3f: freq=%.3f d=%d(%.3f)",
         #              sent_time, new_freq, clock - exp_clock, pred_stddev)
     # clock frequency conversions
     def print_time_to_clock(self, print_time):
-        return int(print_time * self.mcu_freq)
+        return mymovie.Py_fast_convert_to_int(print_time * self.mcu_freq)
     def clock_to_print_time(self, clock):
         return clock / self.mcu_freq
     # system time conversions
     def get_clock(self, eventtime):
         sample_time, clock, freq = self.clock_est
-        return int(clock + (eventtime - sample_time) * freq)
+        value=clock + (eventtime - sample_time) * freq
+        return mymovie.Py_fast_convert_to_int(value)
     def estimate_clock_systime(self, reqclock):
         sample_time, clock, freq = self.clock_est
         return float(reqclock - clock)/freq + sample_time
@@ -183,7 +206,7 @@ class SecondarySync(ClockSync):
     # clock frequency conversions
     def print_time_to_clock(self, print_time):
         adjusted_offset, adjusted_freq = self.clock_adj
-        return int((print_time - adjusted_offset) * adjusted_freq)
+        return mymovie.Py_fast_convert_to_int((print_time - adjusted_offset) * adjusted_freq)
     def clock_to_print_time(self, clock):
         adjusted_offset, adjusted_freq = self.clock_adj
         return clock / adjusted_freq + adjusted_offset

@@ -54,6 +54,10 @@ class MCU_stepper:
                                                        self._query_mcu_position)
     def get_mcu(self):
         return self._mcu
+
+    def get_pin_info(self):
+        return self._dir_pin, self._step_pin, self._invert_dir, self._invert_step
+
     def get_name(self, short=False):
         if short and self._name.startswith('stepper_'):
             return self._name[8:]
@@ -295,6 +299,7 @@ class PrinterRail:
     def __init__(self, config, need_position_minmax=True,
                  default_position_endstop=None, units_in_radians=False):
         # Primary stepper and endstop
+        self.config = config
         self.stepper_units_in_radians = units_in_radians
         self.steppers = []
         self.endstops = []
@@ -318,11 +323,15 @@ class PrinterRail:
             self.position_min = config.getfloat('position_min', 0.)
             self.position_max = config.getfloat(
                 'position_max', above=self.position_min)
+            if config.has_section('gcode_macro PRINTER_PARAM'):
+                if config.get_name() == "stepper_y":
+                    self.position_max = config.getsection('gcode_macro PRINTER_PARAM').getfloat("variable_max_y_position", 350.0)
         else:
             self.position_min = 0.
             self.position_max = self.position_endstop
+        self.set_stepper_x_position_min(self.config)
         if (self.position_endstop < self.position_min
-            or self.position_endstop > self.position_max):
+            or self.position_endstop > self.position_max) and config.get_name() != "stepper_x":
             raise config.error(
                 "position_endstop in section '%s' must be between"
                 " position_min and position_max" % config.get_name())
@@ -344,8 +353,8 @@ class PrinterRail:
                 self.homing_positive_dir = True
             else:
                 raise config.error(
-                    "Unable to infer homing_positive_dir in section '%s'"
-                    % (config.get_name(),))
+                   """{"code":"key75", "msg": "Unable to infer homing_positive_dir in section '%s'", "values": ["%s"]"""
+                    % (config.get_name(),config.get_name()))
             config.getboolean('homing_positive_dir', self.homing_positive_dir)
         elif ((self.homing_positive_dir
                and self.position_endstop == self.position_min)
@@ -354,7 +363,15 @@ class PrinterRail:
             raise config.error(
                 "Invalid homing_positive_dir / position_endstop in '%s'"
                 % (config.get_name(),))
+    def set_stepper_x_position_min(self, config):
+        try:
+            if config.get_name() == "stepper_x":
+                box_action = config.get_printer().lookup_object('box').box_action
+                self.position_min = box_action.boxcfg.cut_pos_x
+        except Exception as err:
+            logging.exception(err)
     def get_range(self):
+        self.set_stepper_x_position_min(self.config)
         return self.position_min, self.position_max
     def get_homing_info(self):
         homing_info = collections.namedtuple('homing_info', [
@@ -398,9 +415,8 @@ class PrinterRail:
             changed_invert = pin_params['invert'] != endstop['invert']
             changed_pullup = pin_params['pullup'] != endstop['pullup']
             if changed_invert or changed_pullup:
-                raise error("Pinter rail %s shared endstop pin %s "
-                            "must specify the same pullup/invert settings" % (
-                                self.get_name(), pin_name))
+                raise error("""{"code":"key76", "msg": "Pinter rail %s shared endstop pin %s must specify the same pullup/invert settings", "values": ["%s", "%s"]}""" % (
+                                self.get_name(), pin_name, self.get_name(), pin_name))
         mcu_endstop.add_stepper(stepper)
     def setup_itersolve(self, alloc_func, *params):
         for stepper in self.steppers:

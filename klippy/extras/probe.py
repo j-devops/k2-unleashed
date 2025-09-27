@@ -23,6 +23,8 @@ class PrinterProbe:
         self.x_offset = config.getfloat('x_offset', 0.)
         self.y_offset = config.getfloat('y_offset', 0.)
         self.z_offset = config.getfloat('z_offset')
+        self.z_offset_calibrate = 0
+        self.z_offset_change_flag = False
         self.probe_calibrate_z = 0.
         self.multi_probe_pending = False
         self.last_state = False
@@ -116,7 +118,7 @@ class PrinterProbe:
         toolhead = self.printer.lookup_object('toolhead')
         curtime = self.printer.get_reactor().monotonic()
         if 'z' not in toolhead.get_status(curtime)['homed_axes']:
-            raise self.printer.command_error("Must home before probe")
+            raise self.printer.command_error("""{"code":"key96", "msg": "Must home before probe", "values": []}""")
         phoming = self.printer.lookup_object('homing')
         pos = toolhead.get_position()
         pos[2] = self.z_position
@@ -127,6 +129,17 @@ class PrinterProbe:
             if "Timeout during endstop homing" in reason:
                 reason += HINT_TIMEOUT
             raise self.printer.command_error(reason)
+        # get z compensation from axis_twist_compensation
+        axis_twist_compensation = self.printer.lookup_object(
+            'axis_twist_compensation', None)
+        z_compensation = 0
+        if axis_twist_compensation is not None:
+            z_compensation = (
+                axis_twist_compensation.get_z_compensation_value(pos))
+        # add z compensation to probe position
+        self.gcode.respond_info("probe at %.3f,%.3f is z=%.6f z_compensation=%.6f"
+                                % (epos[0], epos[1], epos[2],z_compensation))
+        epos[2] += z_compensation
         self.gcode.respond_info("probe at %.3f,%.3f is z=%.6f"
                                 % (epos[0], epos[1], epos[2]))
         return epos[:3]
@@ -196,7 +209,8 @@ class PrinterProbe:
         gcmd.respond_info("probe: %s" % (["open", "TRIGGERED"][not not res],))
     def get_status(self, eventtime):
         return {'last_query': self.last_state,
-                'last_z_result': self.last_z_result}
+                'last_z_result': self.last_z_result,
+                'z_offset': self.z_offset_calibrate if self.z_offset_change_flag else self.z_offset}
     cmd_PROBE_ACCURACY_help = "Probe Z-height accuracy at current XY position"
     def cmd_PROBE_ACCURACY(self, gcmd):
         speed = gcmd.get_float("PROBE_SPEED", self.speed, above=0.)
@@ -239,6 +253,7 @@ class PrinterProbe:
             "probe accuracy results: maximum %.6f, minimum %.6f, range %.6f, "
             "average %.6f, median %.6f, standard deviation %.6f" % (
             max_value, min_value, range_value, avg_value, median, sigma))
+        return max_value, min_value, range_value, avg_value, median, sigma,positions
     def probe_calibrate_finalize(self, kin_pos):
         if kin_pos is None:
             return
@@ -269,17 +284,36 @@ class PrinterProbe:
     def cmd_Z_OFFSET_APPLY_PROBE(self,gcmd):
         offset = self.gcode_move.get_status()['homing_origin'].z
         configfile = self.printer.lookup_object('configfile')
-        if offset == 0:
-            self.gcode.respond_info("Nothing to do: Z Offset is 0")
-        else:
-            new_calibrate = self.z_offset - offset
-            self.gcode.respond_info(
-                "%s: z_offset: %.3f\n"
-                "The SAVE_CONFIG command will update the printer config file\n"
-                "with the above and restart the printer."
-                % (self.name, new_calibrate))
-            configfile.set(self.name, 'z_offset', "%.3f" % (new_calibrate,))
+        # if offset == 0:
+        #     self.gcode.respond_info("Nothing to do: Z Offset is 0")
+        # else:
+        new_calibrate = self.z_offset - offset
+        self.gcode.respond_info(
+            "%s: z_offset: %.3f\n"
+            "The SAVE_CONFIG command will update the printer config file\n"
+            "with the above and restart the printer."
+            % (self.name, new_calibrate))
+        configfile.set(self.name, 'z_offset', "%.3f" % (new_calibrate,))
+        self.z_offset_calibrate = new_calibrate
+        self.z_offset_change_flag = True
+        self.record_gcode_offset_when_printing()
     cmd_Z_OFFSET_APPLY_PROBE_help = "Adjust the probe's z_offset"
+
+    def record_gcode_offset_when_printing(self):
+        import os, json
+        try:
+            configfile = self.printer.lookup_object('configfile')
+            print_stats = self.printer.load_object(configfile, 'print_stats')
+            v_sd = self.printer.lookup_object('virtual_sdcard')
+            if print_stats and print_stats.state == "printing" and os.path.exists(v_sd.print_file_name_path) and self.z_offset_change_flag:
+                with open(v_sd.print_file_name_path, "r") as f:
+                    result = (json.loads(f.read()))
+                    result["SET_GCODE_OFFSET"] = self.z_offset_calibrate
+                with open(v_sd.print_file_name_path, "w") as f:
+                    f.write(json.dumps(result))
+                    f.flush()
+        except Exception as err:
+            logging.error("record_gcode_offset_when_printing error: %s" % err)
 
 # Endstop wrapper that enables probe specific features
 class ProbeEndstopWrapper:
@@ -369,10 +403,15 @@ class ProbePointsHelper:
         self.lift_speed = self.speed
         self.probe_offsets = (0., 0., 0.)
         self.results = []
+        self.probe_type = ""
+        if config.has_section('prtouch_v2'):
+            self.probe_type = "prtouch_v2"
+        elif config.has_section('bltouch'):
+            self.probe_type = "bltouch"
     def minimum_points(self,n):
         if len(self.probe_points) < n:
             raise self.printer.config_error(
-                "Need at least %d probe points for %s" % (n, self.name))
+                """{"code":"key98", "msg": "Need at least %d probe points for %s", "values": [%d, "%s"]}""" % (n, self.name, n, self.name))
     def update_probe_points(self, points, min_points):
         self.probe_points = points
         self.minimum_points(min_points)
@@ -387,7 +426,8 @@ class ProbePointsHelper:
         if not self.results:
             # Use full speed to first probe position
             speed = self.speed
-        toolhead.manual_move([None, None, self.horizontal_move_z], speed)
+        if self.probe_type != "prtouch_v2":
+            toolhead.manual_move([None, None, self.horizontal_move_z], speed)
         # Check if done probing
         if len(self.results) >= len(self.probe_points):
             toolhead.get_last_move_time()
@@ -400,7 +440,10 @@ class ProbePointsHelper:
         if self.use_offsets:
             nextpos[0] -= self.probe_offsets[0]
             nextpos[1] -= self.probe_offsets[1]
-        toolhead.manual_move(nextpos, self.speed)
+        if self.probe_type == "prtouch_v2":
+            self.printer.lookup_object('probe').mcu_probe.run_to_next(nextpos)
+        else:
+            toolhead.manual_move(nextpos, self.speed)
         return False
     def start_probe(self, gcmd):
         manual_probe.verify_no_manual_probe(self.printer)
@@ -418,11 +461,20 @@ class ProbePointsHelper:
         self.lift_speed = probe.get_lift_speed(gcmd)
         self.probe_offsets = probe.get_offsets()
         if self.horizontal_move_z < self.probe_offsets[2]:
-            raise gcmd.error("horizontal_move_z can't be less than"
-                             " probe's z_offset")
+            raise gcmd.error("""{"code": "key15", "msg": "horizontal_move_z can't be less than probe's z_offset"}""")
         probe.multi_probe_begin()
+        # gcode = self.printer.lookup_object('gcode')
+        # g28_gcmd = gcode.create_gcode_command("G28", "G28", {'X': '0', 'Y': '0', 'Z': '0'})
+        # self.safe_z_home = self.printer.lookup_object('safe_z_home')
+        # self.safe_z_home.cmd_G28(g28_gcmd)
         while 1:
             done = self._move_next()
+
+            # 增加等待时间，用于倾斜校准等待一小段时间，避免干扰
+            wait_time = gcmd.get_float('WAITTIME', default = 0)
+            if wait_time != 0:
+                logging.info("Z_TILT_ADJUST wait_time: %s" % wait_time)
+                self.printer.get_reactor().pause(self.printer.get_reactor().monotonic() + wait_time)
             if done:
                 break
             pos = probe.run_probe(gcmd)

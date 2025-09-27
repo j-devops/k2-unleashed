@@ -3,7 +3,8 @@
 # Copyright (C) 2016-2021  Kevin O'Connor <kevin@koconnor.net>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
-import logging, math
+import logging, math, json, os
+from extras.z_align import MOTOR_PROTECT_ERROR
 
 HOMING_START_DELAY = 0.001
 ENDSTOP_SAMPLE_TIME = .000015
@@ -41,6 +42,9 @@ class HomingMove:
         self.endstops = endstops
         if toolhead is None:
             toolhead = printer.lookup_object('toolhead')
+
+        self.prtouch_v3 = printer.lookup_object('prtouch_v3')
+        self.prtouch_v3.z_full_movement_flag = False
         self.toolhead = toolhead
         self.stepper_positions = []
     def get_mcu_endstops(self):
@@ -65,6 +69,16 @@ class HomingMove:
             kin_spos[sname] += offsets.get(sname, 0) * stepper.get_step_dist()
         thpos = self.toolhead.get_position()
         return list(kin.calc_position(kin_spos))[:3] + thpos[3:]
+    def handle_force_stop(self):
+        # 拉高pa9 en引脚, 清除运动队列, 查询保护码, 设置xy电机到错误码输出模式
+        # self.printer.lookup_object('motor_control').force_stop()
+        toolhead = self.printer.lookup_object('toolhead')
+        toolhead._handle_shutdown()
+        toolhead.reactor.pause(toolhead.reactor.monotonic() + 1.0)
+        gcode = self.printer.lookup_object('gcode')
+        gcode.run_script_from_command("MOTOR_CHECK_PROTECTION_AFTER_HOME DATA=11")
+        gcode.run_script_from_command("MOTOR_STALL_MODE DATA=2")
+        toolhead.can_pause = True
     def homing_move(self, movepos, speed, probe_pos=False,
                     triggered=True, check_triggered=True):
         # Notify start of homing/probing move
@@ -74,9 +88,11 @@ class HomingMove:
         kin = self.toolhead.get_kinematics()
         kin_spos = {s.get_name(): s.get_commanded_position()
                     for s in kin.get_steppers()}
+        
         self.stepper_positions = [ StepperPosition(s, name)
                                    for es, name in self.endstops
                                    for s in es.get_steppers() ]
+
         # Start endstop checking
         print_time = self.toolhead.get_last_move_time()
         endstop_triggers = []
@@ -93,7 +109,9 @@ class HomingMove:
         try:
             self.toolhead.drip_move(movepos, speed, all_endstop_trigger)
         except self.printer.command_error as e:
-            error = "Error during homing move: %s" % (str(e),)
+            error = """{"code":"key20", "msg":"Error during homing move: %s", "values": [%s]}""" % (str(e),str(e))
+            logging.info("No trigger on %s after full movement, set MOTOR_STALL_MODE DATA=2"%name)
+            self.handle_force_stop()
         # Wait for endstops to trigger
         trigger_times = {}
         move_end_print_time = self.toolhead.get_last_move_time()
@@ -102,9 +120,20 @@ class HomingMove:
             if trigger_time > 0.:
                 trigger_times[name] = trigger_time
             elif trigger_time < 0. and error is None:
-                error = "Communication timeout during homing %s" % (name,)
+                error = """{"code":"key21", "msg":"Communication timeout during homing %s", "values": ["%s"]}""" % (name, name)
+                logging.info("Communication timeout during homing %s, set MOTOR_STALL_MODE DATA=2"%name)
+                self.handle_force_stop()
             elif check_triggered and error is None:
-                error = "No trigger on %s after full movement" % (name,)
+                error = """{"code":"key22", "msg":"No trigger on %s after full movement", "values": ["%s"]}""" % (name, name)
+                # z轴误触发后,对x、y电机进行切换为错误码输出模式
+                if name == "z":
+                    error = None
+                    self.prtouch_v3.z_full_movement_flag = True
+                    logging.info("No trigger on z after full movement, set MOTOR_STALL_MODE DATA=2")
+                    gcode = self.printer.lookup_object('gcode')
+                    gcode.run_script_from_command("MOTOR_STALL_MODE DATA=2")
+                logging.info("No trigger on %s after full movement, set MOTOR_STALL_MODE DATA=2"%name)
+                self.handle_force_stop()
         # Determine stepper halt positions
         self.toolhead.flush_step_generation()
         for sp in self.stepper_positions:
@@ -144,7 +173,7 @@ class HomingMove:
             if sp.start_pos == sp.trig_pos:
                 return sp.endstop_name
         return None
-
+        
 # State tracking of homing requests
 class Homing:
     def __init__(self, printer):
@@ -153,6 +182,10 @@ class Homing:
         self.changed_axes = []
         self.trigger_mcu_pos = {}
         self.adjust_pos = {}
+        self.stepper_z_sensorless_flag = False
+        self.out_z_all = 0
+        self.homez_info = None
+
     def set_axes(self, axes):
         self.changed_axes = axes
     def get_axes(self):
@@ -170,6 +203,19 @@ class Homing:
         return thcoord
     def set_homed_position(self, pos):
         self.toolhead.set_position(self._fill_coord(pos))
+
+    def get_step(self,endstops):
+        self.stepper_positions = [ StepperPosition(s, name)
+                                   for es, name in endstops
+                                   for s in es.get_steppers() ]
+        for sp in self.stepper_positions:
+            if sp.stepper_name == "stepper_z":
+                kin = self.toolhead.get_kinematics()
+                halt_step_dist = {s.get_name(): s.get_step_dist()
+                                 for s in kin.get_steppers()}
+                logging.info("start_pos:%s trig_pos:%s halt_step_dist:%s" % (sp.start_pos,sp.trig_pos,halt_step_dist[sp.stepper_name]))
+                return [sp.start_pos, halt_step_dist[sp.stepper_name]]
+        return None
     def home_rails(self, rails, forcepos, movepos):
         # Notify of upcoming homing operation
         self.printer.send_event("homing:home_rails_begin", self, rails)
@@ -181,8 +227,17 @@ class Homing:
         # Perform first home
         endstops = [es for rail in rails for es in rail.get_endstops()]
         hi = rails[0].get_homing_info()
+        # 获取归零开始时的z电机step
+        _homez_info = self.get_step(endstops)
+        if _homez_info is not None:
+            # 记录start_pos halt_pos step_dist数据
+            self.homez_info = _homez_info
         hmove = HomingMove(self.printer, endstops)
-        hmove.homing_move(homepos, hi.speed)
+        if self.stepper_z_sensorless_flag:
+            hmove.homing_move(homepos, hi.speed*4, False, True, False)
+        else:
+            hmove.homing_move(homepos, hi.speed)      
+
         # Perform second home
         if hi.retract_dist:
             # Retract
@@ -200,10 +255,23 @@ class Homing:
             self.toolhead.set_position(startpos)
             hmove = HomingMove(self.printer, endstops)
             hmove.homing_move(homepos, hi.second_homing_speed)
-            if hmove.check_no_movement() is not None:
+
+            if hmove.check_no_movement() is not None and rails[0].get_name() == "stepper_z":
+                hmove.prtouch_v3.z_full_movement_flag = True
+                self.printer.send_event("homing:homing_move_end", hmove)
+
+
+            # 获取停止时后的z电机step
+            _homez_info = self.get_step(endstops)
+            if _homez_info is not None:
+                # 只更新halt_pos数据
+                self.out_z_all = abs(self.homez_info[0] - _homez_info[0]) * self.homez_info[1]
+            if hmove.check_no_movement() is not None and rails[0].get_name() != "stepper_z":
+                logging.info("hmove.check_no_movement %s, set MOTOR_STALL_MODE DATA=2" % hmove.check_no_movement())
+                hmove.handle_force_stop()
                 raise self.printer.command_error(
-                    "Endstop %s still triggered after retract"
-                    % (hmove.check_no_movement(),))
+                    """{"code":"key23", "msg":"Endstop %s still triggered after retract", "values": ["%s"]}"""
+                    % (hmove.check_no_movement(), hmove.check_no_movement()))
         # Signal home operation complete
         self.toolhead.flush_step_generation()
         self.trigger_mcu_pos = {sp.stepper_name: sp.trig_pos
@@ -224,10 +292,19 @@ class Homing:
 
 class PrinterHoming:
     def __init__(self, config):
+        self.config = config
         self.printer = config.get_printer()
         # Register g-code commands
         gcode = self.printer.lookup_object('gcode')
+        gcode.register_command('RECOVERY_Z_ADJUSTMENT', self.cmd_RECOVERY_Z_ADJUSTMENT)
         gcode.register_command('G28', self.cmd_G28)
+        gcode.register_command('STEPPER_Z_SENEORLESS', self.cmd_STEPPER_Z_SENEORLESS)
+        self.probe_type = ""
+        if config.has_section('prtouch_v2'):
+            self.probe_type = "prtouch_v2"
+        elif config.has_section('bltouch'):
+            self.probe_type = "bltouch"
+        self.z_move = 0
     def manual_home(self, toolhead, endstops, pos, speed,
                     triggered, check_triggered):
         hmove = HomingMove(self.printer, endstops, toolhead)
@@ -237,23 +314,59 @@ class PrinterHoming:
         except self.printer.command_error:
             if self.printer.is_shutdown():
                 raise self.printer.command_error(
-                    "Homing failed due to printer shutdown")
+                    '{"code": "key4", "msg": "Homing failed due to printer shutdown"}')
             raise
     def probing_move(self, mcu_probe, pos, speed):
+
         endstops = [(mcu_probe, "probe")]
         hmove = HomingMove(self.printer, endstops)
         try:
-            epos = hmove.homing_move(pos, speed, probe_pos=True)
+            if self.probe_type == "prtouch_v2":
+                epos = self.printer.lookup_object('probe').mcu_probe.run_G29_Z()
+            else:
+                epos = hmove.homing_move(pos, speed, probe_pos=True)
         except self.printer.command_error:
             if self.printer.is_shutdown():
                 raise self.printer.command_error(
-                    "Probing failed due to printer shutdown")
+                    '{"code": "key5", "msg": "Probing failed due to printer shutdown"}')
             raise
-        if hmove.check_no_movement() is not None:
-            raise self.printer.command_error(
-                "Probe triggered prior to movement")
+        # 暂时关闭该检查，跳过误触发导致报错问题，调平代码有异常点重探机制
+        # if hmove.check_no_movement() is not None:
+        #     raise self.printer.command_error(
+        #         '{"code": "key6", "msg": "Probe triggered prior to movement"}')
         return epos
+        
+    def cmd_STEPPER_Z_SENEORLESS(self, gcmd):
+        toolhead = self.printer.lookup_object('toolhead')
+        move_dist = gcmd.get_int('MOVE_DIST', default=0, minval=0, maxval=360)
+        homing_state = Homing(self.printer)
+        homing_state.set_axes([2])
+        kin = self.printer.lookup_object('toolhead').get_kinematics()
+        gcode = self.printer.lookup_object('gcode')
+        gcode.respond_info("cmd_STEPPER_Z_SENEORLESS")
+        gcode.respond_info("move_dist {}".format(move_dist))
+        kin.home_z_with_sensorless(homing_state, move_dist)
+        # gcode = self.printer.lookup_object('gcode')
+        pos = toolhead.get_position()
+        pos[2] = move_dist - 3
+        toolhead.set_position(pos, homing_axes=[2])
+        #gcode.run_script_from_command('G4 P1000')
+        #gcode.run_script_from_command('G91')
+        #gcode.run_script_from_command('G1 Z-5 F2400')
+        #gcode.run_script_from_command('M400')
+        #gcode.run_script_from_command('G90')
+        #toolhead.manual_move([None, None, 0.], 5)
+        if hasattr(toolhead.get_kinematics(), "note_z_not_homed"):
+            toolhead.get_kinematics().note_z_not_homed()
+
+    def cmd_RECOVERY_Z_ADJUSTMENT(self, gcmd):
+        # 调用ZDOWN后再调用此处 恢复z_tilt调整值
+        self.resume_adjustment()
+
     def cmd_G28(self, gcmd):
+        # leave flush area
+        if self.printer.lookup_object('box').has_flushing_sign():
+            self.run_gcmd('LEAVE_FLUSH_AREA')
         # Move to origin
         axes = []
         for pos, axis in enumerate('XYZ'):
@@ -263,15 +376,217 @@ class PrinterHoming:
             axes = [0, 1, 2]
         homing_state = Homing(self.printer)
         homing_state.set_axes(axes)
-        kin = self.printer.lookup_object('toolhead').get_kinematics()
+        toolhead = self.printer.lookup_object('toolhead')
+        kin = toolhead.get_kinematics()
+        gcode = self.printer.lookup_object('gcode')
         try:
-            kin.home(homing_state)
-        except self.printer.command_error:
+            if self.probe_type == "prtouch_v2":
+                for a in axes:
+                    if a == 0 or a == 1:
+                        homing_state.set_axes([a])
+                        kin.home(homing_state)
+                    else:
+                        self.printer.lookup_object('probe').mcu_probe.run_G28_Z()
+            else:
+                homing_state.out_z_all = 0
+                for a in axes:
+                    if a == 0 or a == 1:
+                        homing_state.set_axes([a])
+                        kin.home(homing_state)
+                    else:
+                        if self.config.has_section("z_align"):
+                            self.run_gcmd("BED_MESH_CLEAR", wait=True)
+                            max_accel = toolhead.get_max_accel()
+                            z_align = self.printer.lookup_object('z_align')
+                            z_align.force_stop_flag = False
+                            gcode.respond_info("is_already_zodwn:%s zdown_switch_enable:%s" % (z_align.is_already_zodwn, z_align.zdown_switch_enable))
+                            # 检测到没有做过下光电归位时,强制做一次下光电归位
+                            if z_align.is_already_zodwn==False:
+                                gcode.run_script_from_command("SET_VELOCITY_LIMIT ACCEL=300")
+                                ret = self.run_G28_two_Z()
+                                if ret == MOTOR_PROTECT_ERROR:
+                                    gcode.respond_info("Z MOTOR_PROTECT_ERROR")
+                                    raise
+                                gcode.run_script_from_command("SET_VELOCITY_LIMIT ACCEL=%s" % max_accel )
+                                kin.home(homing_state)
+                                gcode.respond_info("za1:%s za2:%s z_max:%s"%(self.z_move,homing_state.out_z_all,(self.z_move+homing_state.out_z_all)))
+                                if toolhead.G29_flag == True:
+                                    gcode.respond_info("save config za1:%s za2:%s z_max:%s"%(self.z_move,homing_state.out_z_all,(self.z_move+homing_state.out_z_all)))
+                                    self.write_real_zmax(self.z_move+homing_state.out_z_all)
+                                z_align.is_already_zodwn = True
+                                gcode.run_script_from_command("SET_Z_LIMIT")
+                                continue
+                            # zdown_switch_enable==1时,强制做光电找平; zdown_switch_enable==0时,不做光电找平
+                            if z_align.zdown_switch_enable==1:
+                                z_align.zdown_switch_enable = 0
+                                gcode.run_script_from_command("SET_VELOCITY_LIMIT ACCEL=300")
+                                ret = self.run_G28_two_Z()
+                                if ret == MOTOR_PROTECT_ERROR:
+                                    gcode.respond_info("Z MOTOR_PROTECT_ERROR")
+                                    raise
+                                gcode.run_script_from_command("SET_VELOCITY_LIMIT ACCEL=%s" % max_accel )
+                                kin.home(homing_state)
+                                gcode.respond_info("za1:%s za2:%s z_max:%s"%(self.z_move,homing_state.out_z_all,(self.z_move+homing_state.out_z_all)))
+                                if toolhead.G29_flag == True:
+                                    gcode.respond_info("save config za1:%s za2:%s z_max:%s"%(self.z_move,homing_state.out_z_all,(self.z_move+homing_state.out_z_all)))
+                                    self.write_real_zmax(self.z_move+homing_state.out_z_all)
+                                z_align.is_already_zodwn = True
+                                gcode.run_script_from_command("SET_Z_LIMIT")
+                                continue
+                            curtime = self.printer.get_reactor().monotonic()
+                            gcode_move = self.printer.lookup_object('gcode_move')
+                            if 'z' in toolhead.get_status(curtime)['homed_axes'] and z_align.is_already_zodwn==True and \
+                              gcode_move.get_status(curtime)['position'][2] > 10:
+                                gcmd = 'G1 F%d Z%.3f' % (30 * 60, 10)
+                                self.run_gcmd(gcmd, wait=True)
+                            # 不做光电找平
+                            kin.home(homing_state)
+                            gcode.run_script_from_command("SET_Z_LIMIT")
+                        else:
+                            kin.home(homing_state)
+        except self.printer.command_error as err:
+            logging.exception(err)
+            self.set_stall_mode(gcode)
             if self.printer.is_shutdown():
                 raise self.printer.command_error(
                     "Homing failed due to printer shutdown")
             self.printer.lookup_object('stepper_enable').motor_off()
             raise
+        except Exception as err:
+            logging.exception(err)
+            self.set_stall_mode(gcode)
+            raise
+    def set_stall_mode(self, gcode, check_protection=True):
+        if self.config.has_section("motor_control") and self.config.getsection('motor_control').getint('switch')==1:
+            # gcode.run_script_from_command("MOTOR_CLEAR_ERR_WARN_CODE NUM=0 DATA=5") # 清除错误码
+            self.printer.lookup_object('motor_control').is_homing = False
+            raise
+            # gcode.run_script_from_command("MOTOR_STALL_MODE DATA=2") # stall 引脚模式切换为紧急保护输出模式
+            # self.printer.get_reactor().pause(self.printer.get_reactor().monotonic() + 1.0)
+            # self.printer.lookup_object('motor_control').is_homing = False
+            # if check_protection:
+            #     gcode.run_script_from_command("MOTOR_CHECK_PROTECTION_AFTER_HOME DATA=10") # 查询电机是否有错误码
+    def write_real_zmax(self, data):
+        z_align = self.printer.lookup_object('z_align')
+        max_z = self.config.getsection('stepper_z').getfloat('position_max', default=360)
+        logging.info("stepper_z position_max:%s" % max_z)
+        if data < max_z-15 or data > max_z:
+            logging.error("real zmax out of range[%s, %s]: %s" % ((max_z-15), max_z, data))
+            return
+        real_zmax_path = z_align.get_real_zmax_path()
+        with open(real_zmax_path, "w") as f:
+            logging.info("real_zmax_path write zmax:%s" % data)
+            f.write(json.dumps({"zmax": data}))
+            f.flush()
+
+    def run_G28_two_Z(self):
+        try:
+            # self.move_to_center(speed=50, wait=True)
+            gcode = self.printer.lookup_object('gcode')
+            gcmd = gcode.create_gcode_command("", "", {})
+            z_align = self.printer.lookup_object('z_align')
+            ret = z_align.cmd_ZDOWN(gcmd)
+            gcode = self.printer.lookup_object('gcode')
+            gcode.respond_info("ZDOWN ret:%s"%ret)
+            if ret == MOTOR_PROTECT_ERROR:
+                return MOTOR_PROTECT_ERROR
+            # self.resume_adjustment()
+            # self.set_max_z_pos()
+            max_z = self.config.getsection('stepper_z').getfloat('position_max')
+            # distance_ratio 向上快速运动距离的比例系数
+            distance_ratio = self.printer.lookup_object('z_align').distance_ratio
+            self.z_move = max_z*distance_ratio
+            self.move_z(speed=30, height=self.z_move) 
+            # 检测电机保护错误码是否存在
+            if self.config.has_section("motor_control") and self.config.getsection('motor_control').getint('switch')==1:
+                motor_error_code = self.printer.lookup_object('motor_control').motor_error_code
+                for i in range(1,5):
+                    if motor_error_code.get(str(i), 0):
+                        gcode.respond_info("%s motor_error_code..." % str(i))
+                        return MOTOR_PROTECT_ERROR
+        except Exception as err:
+            logging.exception(err)
+        return 0
+
+    def resume_adjustment(self):
+        z_tilt = self.printer.lookup_object('z_tilt')
+        if os.path.exists(z_tilt.stepper_adjustment_path):
+            result = {}
+            with open(z_tilt.stepper_adjustment_path, "r") as f:
+                try:
+                    result = json.loads(f.read())
+                except Exception as err:
+                    pass
+            if result:
+                self.move_z(speed=20, height=9)
+                stepper_z_adjustment = result.get("stepper_z_adjustment", 0)
+                stepper_z1_adjustment = result.get("stepper_z1_adjustment", 0)
+                # gcmd_z = "FORCE_MOVE STEPPER=stepper_z DISTANCE=%s VELOCITY=5" % (-stepper_z_adjustment)
+                # gcmd_z1 = "FORCE_MOVE STEPPER=stepper_z1 DISTANCE=%s VELOCITY=5" % (-stepper_z1_adjustment)
+                gcmd_z = "FORCE_MOVE STEPPER=stepper_z DISTANCE=%s VELOCITY=5" % stepper_z_adjustment # 热床下降 stepper_z_adjustment > 0
+                gcmd_z1 = "FORCE_MOVE STEPPER=stepper_z1 DISTANCE=%s VELOCITY=5" % stepper_z1_adjustment
+                tolerance = abs(stepper_z1_adjustment) if abs(stepper_z_adjustment) > abs(stepper_z1_adjustment) else abs(stepper_z_adjustment)
+                self.run_gcmd(gcmd_z, wait=False)
+                self.run_gcmd(gcmd_z1, wait=False)
+                # reactor = self.printer.get_reactor()
+                # reactor.pause(reactor.monotonic() + 1.0)
+                self.move_z(speed=20, height=-9)
+                # self.move_z(speed=20, height=-(9-tolerance))
+
+    def run_gcmd(self, gcmd, wait=True):
+        toolhead = self.printer.lookup_object('toolhead')
+        gcode = self.printer.lookup_object('gcode')
+        logging.info("run_gcmd:%s"%gcmd)
+        gcode.run_script_from_command(gcmd)
+        if wait:
+            toolhead.wait_moves()
+
+    def move_to_center(self, speed, wait=True):
+        toolhead = self.printer.lookup_object('toolhead')
+        now_pos = pos = toolhead.get_position()
+        min_x = self.config.getsection('stepper_x').getfloat('position_min')
+        max_x = self.config.getsection('stepper_x').getfloat('position_max')
+        min_y = self.config.getsection('stepper_y').getfloat('position_min')
+        max_y = self.config.getsection('stepper_y').getfloat('position_max')
+        home_x = min_x + (max_x - min_x) / 2
+        home_y = min_y + (max_y - min_y) / 2
+        pos[0] = home_x
+        pos[1] = home_y
+        gcmd = 'G1 F%d X%.3f Y%.3f' % (speed * 60, pos[0], pos[1])
+        self.run_gcmd(gcmd, wait=True)
+
+    def move_z(self, speed=50, wait=True, height=5):
+        toolhead = self.printer.lookup_object('toolhead')
+        now_pos = toolhead.get_position()
+        toolhead.set_position(now_pos, homing_axes=(2,))
+        logging.info("move_z now_pos:%s"%str(now_pos))
+        slow_up_pos = now_pos[2] - 4
+        now_pos[2] = now_pos[2] - height
+        gcmd = 'G1 F%d X%.3f Y%.3f Z%.3f' % (speed * 60, now_pos[0], now_pos[1], now_pos[2])
+        logging.info("move_z gcmd:%s"%gcmd)
+        self.run_gcmd("G4 P200", wait=True)
+        self.run_gcmd(gcmd, wait=True)
+
+    def set_max_z_pos(self):
+        toolhead = self.printer.lookup_object('toolhead')
+        now_pos = toolhead.get_position()
+        logging.info("before set_max_z_pos cur toolhead.set_position:%s" % str(now_pos))
+        now_pos[2] = self.config.getsection('stepper_z').getfloat('position_max')
+        toolhead.set_position(now_pos, homing_axes=(2,))
+        logging.info("after set_max_z_pos cur toolhead.set_position:%s" % str(now_pos))
+
+    # def check_endstops_z(self):
+    #     query_endstops = self.printer.load_object(self.config, 'query_endstops')
+    #     # endstops_z = query_endstops.endstops[2][0]
+    #     # endstops_z1 = query_endstops.endstops[3][0]
+    #     endstops_z_z1 = [query_endstops.endstops[2], query_endstops.endstops[3]]
+    #     print_time = self.printer.lookup_object('toolhead').get_last_move_time()
+    #     last_state = [(name, mcu_endstop.query_endstop(print_time))
+    #                     for mcu_endstop, name in endstops_z_z1]
+    #     result = [(name, ["open", "TRIGGERED"][not not t]) for name, t in last_state]
+    #     if result[0][1] == "TRIGGERED" or result[1][1] == "TRIGGERED":
+    #         return (True, result)
+    #     return (False, result)
 
 def load_config(config):
     return PrinterHoming(config)

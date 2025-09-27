@@ -6,12 +6,18 @@
 
 #include <math.h> // sqrt
 #include <stddef.h> // offsetof
+#include <stdio.h> // printf
 #include <stdlib.h> // malloc
 #include <string.h> // memset
 #include "compiler.h" // unlikely
 #include "trapq.h" // move_get_coord
 
 // Allocate a new 'move' object
+typedef int bool;
+#define true 1
+#define false 0
+
+
 struct move *
 move_alloc(void)
 {
@@ -20,6 +26,82 @@ move_alloc(void)
     return m;
 }
 
+typedef struct _move_data_t_in_trapq_ {
+    double start_pos[4];
+    double end_pos[4];
+    // ????
+    double start_v;
+    double cruise_v;
+    double end_v;
+    double accel_t;
+    double cruise_t;
+    double decel_t;
+
+    double accel;
+    double junction_deviation;
+    bool is_kinematic_move;
+    double axes_d[4];
+    double move_d;
+    double axes_r[4];
+    double min_move_t;
+    double max_start_v2;
+    double max_cruise_v2;
+    double delta_v2;
+    double max_smoothed_v2;
+    double smooth_delta_v2;
+    struct _move_data_t_in_trapq_* next;
+} move_data_t_in_trapq;
+
+append_return_t __visible
+trapq_append_from_moveq(struct trapq *tq_kinematic, struct trapq *tq_extruder,double next_move_time,unsigned int move_data_h,int move_num)
+{
+    // printf("get move head addr 0x%x\n",(unsigned int)move_data_h);
+    move_data_t_in_trapq *move_data = NULL;
+    double next_move_time_ = next_move_time;
+    double extru_last_position=999999999.999;
+    append_return_t return_value;
+    int i = 0;
+    for (move_data = (move_data_t_in_trapq*)move_data_h; move_data != NULL;move_data = move_data->next) { // for each move in move_data_h
+        if (move_data->is_kinematic_move) {
+            trapq_append(tq_kinematic, next_move_time_, move_data->accel_t, move_data->cruise_t,
+                        move_data->decel_t, move_data->start_pos[0],
+                        move_data->start_pos[1], move_data->start_pos[2],
+                        move_data->axes_r[0], move_data->axes_r[1],
+                        move_data->axes_r[2], move_data->start_v,
+                        move_data->cruise_v, move_data->accel);
+        }
+
+        if(move_data->axes_d[3]!=0){
+            double axis_r = (double)move_data->axes_r[3];
+            double accel = move_data->accel * axis_r;
+            double start_v = move_data->start_v * axis_r;
+            double cruise_v = move_data->cruise_v * axis_r;
+            bool can_pressure_advance = false;
+            if (axis_r > 0. && (move_data->axes_d[0] || move_data->axes_d[1]))
+                can_pressure_advance = true;
+            #if 0
+            if((move_data->start_pos[2] <2.0+0.2)&&(move_data->start_pos[2] > 2.0-0.2)){//layer 7,z=2.0
+                printf("layer 7,z=2.0,x:%f,y:%f,z:%f,move_d:%f,accel:%f,start_v:%f,cruise_v:%f,accel_t:%f,cruise_t:%f,decel_t:%f,can_pressure_advance:%d\n",move_data->start_pos[0],move_data->start_pos[1],move_data->start_pos[2],move_data->move_d,accel,start_v,cruise_v,move_data->accel_t,move_data->cruise_t,move_data->decel_t,can_pressure_advance);
+            }else if((move_data->start_pos[2] <9.75+0.2)&&(move_data->start_pos[2] > 9.75-0.2)){//layer 38,z=9.75))
+                printf("layer 38,z=9.75,x:%f,y:%f,z:%f,move_d:%f,accel:%f,start_v:%f,cruise_v:%f,accel_t:%f,cruise_t:%f,decel_t:%f,can_pressure_advance:%d\n",move_data->start_pos[0],move_data->start_pos[1],move_data->start_pos[2],move_data->move_d,accel,start_v,cruise_v,move_data->accel_t,move_data->cruise_t,move_data->decel_t,can_pressure_advance);
+            }
+            #endif
+            trapq_append(tq_extruder, next_move_time_,
+                        move_data->accel_t, move_data->cruise_t, move_data->decel_t,
+                        move_data->start_pos[3], 0., 0.,
+                        1., can_pressure_advance, 0.,
+                        start_v, cruise_v, accel);
+            extru_last_position = move_data->end_pos[3];
+        }
+        next_move_time_ = (next_move_time_ + move_data->accel_t + move_data->cruise_t + move_data->decel_t);
+        i++;
+        if (i == move_num)
+        break;
+    }
+    return_value.extru_last_position = extru_last_position;
+    return_value.next_move_time = next_move_time_;
+    return return_value;
+}
 // Fill and add a move to the trapezoid velocity queue
 void __visible
 trapq_append(struct trapq *tq, double print_time

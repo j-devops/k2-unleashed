@@ -86,12 +86,18 @@ void
 sched_add_timer(struct timer *add)
 {
     uint32_t waketime = add->waketime;
+	uint8_t flags = 0;
     irqstatus_t flag = irq_save();
     struct timer *tl = SchedStatus.timer_list;
     if (unlikely(timer_is_before(waketime, tl->waketime))) {
         // This timer is before all other scheduled timers
         if (timer_is_before(waketime, timer_read_time()))
-            try_shutdown("Timer too close");
+		{
+            //try_shutdown("Timer too close");
+			flags = 1;
+			waketime = timer_read_time() + timer_from_us(2);
+			add->waketime = waketime;
+		}
         if (tl == &deleted_timer)
             add->next = deleted_timer.next;
         else
@@ -104,6 +110,11 @@ sched_add_timer(struct timer *add)
         insert_timer(tl, add, waketime);
     }
     irq_restore(flag);
+    if(flags)
+	{			
+		output("Timer too close");
+		flags = 0;
+	}
 }
 
 // The deleted timer is used when deleting an active timer.
@@ -245,7 +256,13 @@ run_tasks(void)
                 // Sleep processor (only run timers) until tasks woken
                 SchedStatus.tasks_status = TS_IDLE;
                 do {
+#if CONFIG_MACH_LINUX
                     irq_wait();
+#else
+					asm volatile("cpsie i" ::: "memory");
+					extern void prtouch_task(void);
+					prtouch_task();
+#endif
                 } while (SchedStatus.tasks_status != TS_REQUESTED);
             }
             irq_enable();
@@ -320,6 +337,15 @@ sched_try_shutdown(uint_fast8_t reason)
 {
     if (!SchedStatus.shutdown_status)
         sched_shutdown(reason);
+}
+
+//Only report error message to host 
+void __always_inline
+sched_fake_shutdown(uint_fast8_t reason)
+{
+    uint32_t cur = timer_read_time();
+    sendf("fakeshutdown clock=%u static_string_id=%hu", cur
+          , reason);
 }
 
 static jmp_buf shutdown_jmp;

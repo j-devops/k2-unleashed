@@ -5,13 +5,38 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import os, logging
 import cffi
-
+import sys
 
 ######################################################################
 # c_helper.so compiling
 ######################################################################
 
 GCC_CMD = "gcc"
+
+# 如果命令行参数中提供了新值，则使用新值
+# 交叉编译使用示例 
+# python ./klippy/chelper/__init__.py GCC_CMD=/home/zhan/Downloads/ingenic_linux-develop/tools/toolchains/mips-gcc720-glibc229/bin/mips-linux-gnu-gcc 
+if len(sys.argv) > 1: 
+    if sys.argv[1].startswith("GCC_CMD="):
+        GCC_CMD = sys.argv[1].split("=", 1)[1]
+    else:
+        logging.info("Not using GCC_CMD from command line: %s", sys.argv[1])
+
+# 检查 gcc 编译器是否存在
+def check_gcc_exists():
+    compiler_exists = os.system("which gcc > /dev/null 2>&1") == 0
+    return compiler_exists
+
+# 判断是否应该执行编译
+should_compile = check_gcc_exists()
+
+if should_compile:
+    logging.info("GCC compiler found. Compiling the source code...")
+    print("GCC compiler found. Compiling the source code...")
+else:
+    logging.info("GCC compiler not found. Skipping compilation.")
+    print("GCC compiler not found. Skipping compilation.")
+
 COMPILE_ARGS = ("-Wall -g -O2 -shared -fPIC"
                 " -flto -fwhole-program -fno-use-linker-plugin"
                 " -o %s %s")
@@ -21,12 +46,12 @@ SOURCE_FILES = [
     'pollreactor.c', 'msgblock.c', 'trdispatch.c',
     'kin_cartesian.c', 'kin_corexy.c', 'kin_corexz.c', 'kin_delta.c',
     'kin_deltesian.c', 'kin_polar.c', 'kin_rotary_delta.c', 'kin_winch.c',
-    'kin_extruder.c', 'kin_shaper.c',
+    'kin_extruder.c', 'kin_shaper.c', 'serial_485_queue.c', 'msgblock_485.c', 'filament_change.c',
 ]
 DEST_LIB = "c_helper.so"
 OTHER_FILES = [
     'list.h', 'serialqueue.h', 'stepcompress.h', 'itersolve.h', 'pyhelper.h',
-    'trapq.h', 'pollreactor.h', 'msgblock.h'
+    'trapq.h', 'pollreactor.h', 'msgblock.h', 'serial_485_queue.h', 'msgblock_485.h',
 ]
 
 defs_stepcompress = """
@@ -84,6 +109,13 @@ defs_trapq = """
         double start_x, start_y, start_z;
         double x_r, y_r, z_r;
     };
+
+    typedef struct{
+        double extru_last_position;
+        double next_move_time;
+    }append_return_t;
+
+    append_return_t trapq_append_from_moveq(struct trapq *tq_kinematic, struct trapq *tq_extruder,double next_move_time,unsigned int move_data_h,int move_num);
 
     void trapq_append(struct trapq *tq, double print_time
         , double accel_t, double cruise_t, double decel_t
@@ -199,11 +231,32 @@ defs_trdispatch = """
 
 defs_pyhelper = """
     void set_python_logging_callback(void (*func)(const char *));
-    double get_monotonic(void);
 """
 
 defs_std = """
     void free(void*);
+"""
+
+defs_serial_485_queue = """
+    #define BUFFER_MAX 512
+    struct pull_message {
+        int len;
+        uint8_t msg[BUFFER_MAX];
+    };
+    void serial_485_queue_send(struct serial_485_queue *sq, uint8_t *msg, int len);
+    void serial_485_queue_pull(struct serial_485_queue *sq, struct pull_message *pqm);
+    void serial_485_queue_get_stats(struct serial_485_queue *sq, char *buf, int len);
+    struct serial_485_queue * serial_485_queue_alloc(int serial_fd, char serial_fd_type);
+    void serial_485_queue_free(struct serial_485_queue *sq);
+    void serial_485_queue_exit(struct serial_485_queue *sq);
+    uint8_t msgblock_485_crc8(const uint8_t *data, uint32_t len);
+"""
+
+defs_filament_change = """
+    typedef struct {
+        uint8_t r, g, b;
+    } rgb_t;
+    int get_flushing_volume(const rgb_t source, const rgb_t target);
 """
 
 defs_all = [
@@ -211,7 +264,7 @@ defs_all = [
     defs_itersolve, defs_trapq, defs_trdispatch,
     defs_kin_cartesian, defs_kin_corexy, defs_kin_corexz, defs_kin_delta,
     defs_kin_deltesian, defs_kin_polar, defs_kin_rotary_delta, defs_kin_winch,
-    defs_kin_extruder, defs_kin_shaper,
+    defs_kin_extruder, defs_kin_shaper, defs_serial_485_queue, defs_filament_change,
 ]
 
 # Update filenames to an absolute path
@@ -266,21 +319,29 @@ def get_ffi():
         srcfiles = get_abs_files(srcdir, SOURCE_FILES)
         ofiles = get_abs_files(srcdir, OTHER_FILES)
         destlib = get_abs_files(srcdir, [DEST_LIB])[0]
-        if check_build_code(srcfiles+ofiles+[__file__], destlib):
-            if check_gcc_option(SSE_FLAGS):
-                cmd = "%s %s %s" % (GCC_CMD, SSE_FLAGS, COMPILE_ARGS)
-            else:
-                cmd = "%s %s" % (GCC_CMD, COMPILE_ARGS)
-            logging.info("Building C code module %s", DEST_LIB)
-            do_build_code(cmd % (destlib, ' '.join(srcfiles)))
-        FFI_main = cffi.FFI()
-        for d in defs_all:
-            FFI_main.cdef(d)
-        FFI_lib = FFI_main.dlopen(destlib)
-        # Setup error logging
-        pyhelper_logging_callback = FFI_main.callback("void func(const char *)",
-                                                      logging_callback)
-        FFI_lib.set_python_logging_callback(pyhelper_logging_callback)
+        ## 没有检测到gcc的平台不执行此步骤
+        if should_compile:
+            ## 编译前先清除旧有的c_helper.so，防止后面加载出错
+            os.system("rm " + destlib)
+            if check_build_code(srcfiles+ofiles+[__file__], destlib):
+                if check_gcc_option(SSE_FLAGS):
+                    cmd = "%s %s %s" % (GCC_CMD, SSE_FLAGS, COMPILE_ARGS)
+                else:
+                    cmd = "%s %s" % (GCC_CMD, COMPILE_ARGS)
+                logging.info("Building C code module %s", DEST_LIB)
+                do_build_code(cmd % (destlib, ' '.join(srcfiles)))
+
+        ## 如果不是gcc，说明使用的交叉编译，不应执行此步骤，是gcc才执行该步骤，
+        ## 在不含gcc平台下，此步骤不受影响，因为GCC_CMD默认为gcc
+        if GCC_CMD == "gcc":
+            FFI_main = cffi.FFI()
+            for d in defs_all:
+                FFI_main.cdef(d)
+            FFI_lib = FFI_main.dlopen(destlib)
+            # Setup error logging
+            pyhelper_logging_callback = FFI_main.callback("void func(const char *)",
+                                                        logging_callback)
+            FFI_lib.set_python_logging_callback(pyhelper_logging_callback)
     return FFI_main, FFI_lib
 
 

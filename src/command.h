@@ -42,6 +42,8 @@
     sched_shutdown(_DECL_STATIC_STR(msg))
 #define try_shutdown(msg)                       \
     sched_try_shutdown(_DECL_STATIC_STR(msg))
+#define fake_shutdown(msg)                       \
+    sched_fake_shutdown(_DECL_STATIC_STR(msg))
 
 #define MESSAGE_MIN 5
 #define MESSAGE_MAX 64

@@ -145,9 +145,19 @@ void
 command_queue_digital_out(uint32_t *args)
 {
     struct digital_out_s *d = oid_lookup(args[0], command_config_digital_out);
-    struct digital_move *m = move_alloc();
-    uint32_t time = m->waketime = args[1];
+    struct digital_move *m;
+    uint32_t time = 0;
+#if 0
+	if(timer_is_before(args[1],timer_read_time() + timer_from_us(3)))
+	{
+		output("digital_out timer too close");	
+		return;
+	}
+#endif
+    m = move_alloc();
+    time = m->waketime = args[1];
     m->on_duration = args[2];
+
 
     irq_disable();
     int first_on_queue = move_queue_push(&m->node, &d->mq);

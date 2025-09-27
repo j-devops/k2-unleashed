@@ -3,9 +3,9 @@
 # Copyright (C) 2016-2022  Kevin O'Connor <kevin@koconnor.net>
 #
 # This file may be distributed under the terms of the GNU GPLv3 license.
-import math, logging
+import math, logging, os
 import stepper, chelper
-
+import numpy as np
 class ExtruderStepper:
     def __init__(self, config):
         self.printer = config.get_printer()
@@ -101,6 +101,13 @@ class ExtruderStepper:
                % (pressure_advance, smooth_time))
         self.printer.set_rollover_info(self.name, "%s: %s" % (self.name, msg))
         gcmd.respond_info(msg, log=False)
+        try:
+            v_sd = self.printer.lookup_object('virtual_sdcard')
+            gcode_move = self.printer.lookup_object('gcode_move')
+            if os.path.exists(v_sd.print_file_name_path) and v_sd.current_file:
+                gcode_move.recordPrintFileName(v_sd.print_file_name_path, v_sd.current_file.name, pressure_advance="SET_PRESSURE_ADVANCE ADVANCE=%s SMOOTH_TIME=%s" % (pressure_advance, smooth_time))
+        except Exception as err:
+            logging.error(err)
     cmd_SET_E_ROTATION_DISTANCE_help = "Set extruder rotation distance"
     def cmd_SET_E_ROTATION_DISTANCE(self, gcmd):
         rotation_dist = gcmd.get_float('DISTANCE', None)
@@ -149,6 +156,9 @@ class ExtruderStepper:
 # Tracking for hotend heater, extrusion motion queue, and extruder stepper
 class PrinterExtruder:
     def __init__(self, config, extruder_num):
+        self._info_array = [0.0]*(7)
+        self.info_array = np.array(self._info_array, dtype=np.float64)
+        self.info_array_addr_int = self.info_array.ctypes.data
         self.printer = config.get_printer()
         self.name = config.get_name()
         self.last_position = 0.
@@ -162,27 +172,30 @@ class PrinterExtruder:
             config.deprecate('shared_heater')
             self.heater = pheaters.lookup_heater(shared_heater)
         # Setup kinematic checks
-        self.nozzle_diameter = config.getfloat('nozzle_diameter', above=0.)
+        self.__nozzle_diameter = config.getfloat('nozzle_diameter', above=0.)
+        user_nozzle_diameter = config.getfloat('user_nozzle_diameter', default=0.)
+        if user_nozzle_diameter >= 0.1:
+            self.__nozzle_diameter = user_nozzle_diameter
         filament_diameter = config.getfloat(
-            'filament_diameter', minval=self.nozzle_diameter)
+            'filament_diameter', minval=self.__nozzle_diameter)
         self.filament_area = math.pi * (filament_diameter * .5)**2
-        def_max_cross_section = 4. * self.nozzle_diameter**2
+        def_max_cross_section = 4. * self.__nozzle_diameter**2
         def_max_extrude_ratio = def_max_cross_section / self.filament_area
         max_cross_section = config.getfloat(
             'max_extrude_cross_section', def_max_cross_section, above=0.)
-        self.max_extrude_ratio = max_cross_section / self.filament_area
-        logging.info("Extruder max_extrude_ratio=%.6f", self.max_extrude_ratio)
+        self.__max_extrude_ratio = max_cross_section / self.filament_area
+        logging.info("Extruder max_extrude_ratio=%.6f", self.__max_extrude_ratio)
         toolhead = self.printer.lookup_object('toolhead')
         max_velocity, max_accel = toolhead.get_max_velocity()
-        self.max_e_velocity = config.getfloat(
+        self.__max_e_velocity = config.getfloat(
             'max_extrude_only_velocity', max_velocity * def_max_extrude_ratio
             , above=0.)
-        self.max_e_accel = config.getfloat(
+        self.__max_e_accel = config.getfloat(
             'max_extrude_only_accel', max_accel * def_max_extrude_ratio
             , above=0.)
-        self.max_e_dist = config.getfloat(
+        self.__max_e_dist = config.getfloat(
             'max_extrude_only_distance', 50., minval=0.)
-        self.instant_corner_v = config.getfloat(
+        self.__instant_corner_v = config.getfloat(
             'instantaneous_corner_velocity', 1., minval=0.)
         # Setup extruder trapq (trapezoidal motion queue)
         ffi_main, ffi_lib = chelper.get_ffi()
@@ -200,16 +213,27 @@ class PrinterExtruder:
         gcode = self.printer.lookup_object('gcode')
         if self.name == 'extruder':
             toolhead.set_extruder(self, 0.)
+            gcode.register_command("SET_NOZZLE_DIAMETER", self.cmd_SET_NOZZLE_DIAMETER)
             gcode.register_command("M104", self.cmd_M104)
             gcode.register_command("M109", self.cmd_M109)
         gcode.register_mux_command("ACTIVATE_EXTRUDER", "EXTRUDER",
                                    self.name, self.cmd_ACTIVATE_EXTRUDER,
                                    desc=self.cmd_ACTIVATE_EXTRUDER_help)
+        self.info_array[0]=self.heater.info_array_addr_int
+        self.info_array[1]=self.__max_e_velocity
+        self.info_array[2]=self.__max_e_accel
+        self.info_array[3]=self.__max_extrude_ratio
+        self.info_array[4]=self.__nozzle_diameter
+        self.info_array[5]=self.__max_e_dist
+        self.info_array[6]=self.__instant_corner_v
+        self.extrude_below_min_temp_err_is_report = False
     def update_move_time(self, flush_time):
         self.trapq_finalize_moves(self.trapq, flush_time)
     def get_status(self, eventtime):
         sts = self.heater.get_status(eventtime)
         sts['can_extrude'] = self.heater.can_extrude
+        sts['extrude_below_min_temp_err_is_report'] = self.extrude_below_min_temp_err_is_report
+        sts['nozzle_diameter'] = self.__nozzle_diameter
         if self.extruder_stepper is not None:
             sts.update(self.extruder_stepper.get_status(eventtime))
         return sts
@@ -224,34 +248,43 @@ class PrinterExtruder:
     def check_move(self, move):
         axis_r = move.axes_r[3]
         if not self.heater.can_extrude:
-            raise self.printer.command_error(
-                "Extrude below minimum temp\n"
-                "See the 'min_extrude_temp' config option for details")
+            gcode = self.printer.lookup_object('gcode')
+            print_stats = self.printer.lookup_object('print_stats')
+            m = """{"code":"key111", "msg": "Extrude below minimum temp, See the 'min_extrude_temp' config option for details", "values": []}"""
+            if print_stats.state == "printing" and self.extrude_below_min_temp_err_is_report==False:
+                gcode._respond_error(m)
+                self.extrude_below_min_temp_err_is_report = True
+                gcode.respond_info("state:%s pause_start:%s" % (self.printer.lookup_object('print_stats').state, self.printer.lookup_object('pause_resume').pause_start))
+                if self.printer.lookup_object('print_stats').state == "printing" and self.printer.lookup_object('pause_resume').pause_start == False:
+                    self.printer.lookup_object('gcode').run_script_from_command("PAUSE")
+            elif print_stats.state == "standby":
+                gcode._respond_error(m)
+            return
         if (not move.axes_d[0] and not move.axes_d[1]) or axis_r < 0.:
             # Extrude only move (or retraction move) - limit accel and velocity
-            if abs(move.axes_d[3]) > self.max_e_dist:
+            if abs(move.axes_d[3]) > self.__max_e_dist:
                 raise self.printer.command_error(
                     "Extrude only move too long (%.3fmm vs %.3fmm)\n"
                     "See the 'max_extrude_only_distance' config"
-                    " option for details" % (move.axes_d[3], self.max_e_dist))
+                    " option for details" % (move.axes_d[3], self.__max_e_dist))
             inv_extrude_r = 1. / abs(axis_r)
-            move.limit_speed(self.max_e_velocity * inv_extrude_r,
-                             self.max_e_accel * inv_extrude_r)
-        elif axis_r > self.max_extrude_ratio:
-            if move.axes_d[3] <= self.nozzle_diameter * self.max_extrude_ratio:
+            move.limit_speed(self.__max_e_velocity * inv_extrude_r,
+                             self.__max_e_accel * inv_extrude_r)
+        elif axis_r > self.__max_extrude_ratio:
+            if move.axes_d[3] <= self.__nozzle_diameter * self.__max_extrude_ratio:
                 # Permit extrusion if amount extruded is tiny
                 return
             area = axis_r * self.filament_area
             logging.debug("Overextrude: %s vs %s (area=%.3f dist=%.3f)",
-                          axis_r, self.max_extrude_ratio, area, move.move_d)
+                          axis_r, self.__max_extrude_ratio, area, move.move_d)
             raise self.printer.command_error(
-                "Move exceeds maximum extrusion (%.3fmm^2 vs %.3fmm^2)\n"
-                "See the 'max_extrude_cross_section' config option for details"
-                % (area, self.max_extrude_ratio * self.filament_area))
+                """{"code":"key112", "msg": "Move exceeds maximum extrusion (%.3fmm^2 vs %.3fmm^2)\nSee the 'max_extrude_cross_section' config option for details", "values": [%.3f, %.3f]}"""
+                % (
+                area, self.__max_extrude_ratio * self.filament_area, area, self.__max_extrude_ratio * self.filament_area))
     def calc_junction(self, prev_move, move):
         diff_r = move.axes_r[3] - prev_move.axes_r[3]
         if diff_r:
-            return (self.instant_corner_v / abs(diff_r))**2
+            return (self.__instant_corner_v / abs(diff_r))**2
         return move.max_cruise_v2
     def move(self, print_time, move):
         axis_r = move.axes_r[3]
@@ -284,7 +317,7 @@ class PrinterExtruder:
             if extruder is None:
                 if temp <= 0.:
                     return
-                raise gcmd.error("Extruder not configured")
+                raise gcmd.error("""{"code":"key113", "msg": "Extruder not configured", "values": []}""")
         else:
             extruder = self.printer.lookup_object('toolhead').get_extruder()
         pheaters = self.printer.lookup_object('heaters')
@@ -292,6 +325,13 @@ class PrinterExtruder:
     def cmd_M109(self, gcmd):
         # Set Extruder Temperature and Wait
         self.cmd_M104(gcmd, wait=True)
+    def cmd_SET_NOZZLE_DIAMETER(self, gcmd):
+        value = gcmd.get_float('VALUE', 0.4)
+        self.__nozzle_diameter = value
+        configfile = self.printer.lookup_object('configfile')
+        configfile.set('extruder', 'user_nozzle_diameter', '%.3f' % (self.__nozzle_diameter))
+        gcode = self.printer.lookup_object('gcode')
+        gcode.run_script_from_command('CXSAVE_CONFIG')
     cmd_ACTIVATE_EXTRUDER_help = "Change the active extruder"
     def cmd_ACTIVATE_EXTRUDER(self, gcmd):
         toolhead = self.printer.lookup_object('toolhead')

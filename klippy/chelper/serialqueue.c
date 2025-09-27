@@ -14,14 +14,18 @@
 
 #include <linux/can.h> // // struct can_frame
 #include <math.h> // fabs
+#define __USE_GNU
+#include <sched.h>
 #include <pthread.h> // pthread_mutex_lock
 #include <stddef.h> // offsetof
 #include <stdint.h> // uint64_t
 #include <stdio.h> // snprintf
 #include <stdlib.h> // malloc
 #include <string.h> // memset
+#include <strings.h>
 #include <termios.h> // tcflush
 #include <unistd.h> // pipe
+
 #include "compiler.h" // __visible
 #include "list.h" // list_add_tail
 #include "msgblock.h" // message_alloc
@@ -34,6 +38,9 @@ struct command_queue {
     struct list_node node;
 };
 
+#define PRINTF_FORMAT_STRING_S "F:%d,S:%lld,T:%f,I:%f,L:%d\n"
+#define PRINTF_FORMAT_STRING_R "F:%d,R:%lld,T:%f\n"
+#define PRINTF_BUFF_LEN (40960)
 struct serialqueue {
     // Input reading
     struct pollreactor *pr;
@@ -71,6 +78,9 @@ struct serialqueue {
     struct list_head old_sent, old_receive;
     // Stats
     uint32_t bytes_write, bytes_read, bytes_retransmit, bytes_invalid;
+    uint8_t printf_buf[PRINTF_BUFF_LEN];
+    FILE* debug_file;
+    double last_send_time;
 };
 
 #define SQPF_SERIAL 0
@@ -95,6 +105,34 @@ struct serialqueue {
 #define DEBUG_QUEUE_SENT 100
 #define DEBUG_QUEUE_RECEIVE 100
 
+static void print_send_info(struct serialqueue *sq, uint64_t send_seq){
+    return;
+    int len=strlen((const char*)sq->printf_buf);
+    double cur_time=get_monotonic();
+    if(PRINTF_BUFF_LEN-len<100){
+        // printf("%s",sq->printf_buf);
+        fwrite(sq->printf_buf,1,len,sq->debug_file);
+        bzero(sq->printf_buf,PRINTF_BUFF_LEN);
+        len=0;
+    }
+    sprintf((char*)sq->printf_buf+len,PRINTF_FORMAT_STRING_S,sq->serial_fd,send_seq,cur_time,cur_time-sq->last_send_time,sq->ready_bytes);
+    sq->last_send_time=cur_time;
+    return;
+}
+
+static void print_recv_info(struct serialqueue *sq, uint64_t rev_seq){
+    return;
+    int len=strlen((const char*)sq->printf_buf);
+    double cur_time=get_monotonic();
+    if(PRINTF_BUFF_LEN-len<100){
+        // printf("%s",sq->printf_buf);
+        fwrite(sq->printf_buf,1,len,sq->debug_file);
+        bzero(sq->printf_buf,PRINTF_BUFF_LEN);
+        len=0;
+    }
+    sprintf((char*)sq->printf_buf+len,PRINTF_FORMAT_STRING_R,sq->serial_fd,rev_seq,cur_time);
+    return;
+}
 // Create a series of empty messages and add them to a list
 static void
 debug_queue_alloc(struct list_head *root, int count)
@@ -180,6 +218,8 @@ update_receive_seq(struct serialqueue *sq, double eventtime, uint64_t rseq)
         }
     }
     sq->receive_seq = rseq;
+    // if(sq->receive_seq==sq->wait_ack_seq)
+    //     printf("cur serial %d,receive ack seq=%llu, last_ack_bytes=%d\n",sq->serial_fd,sq->receive_seq,sq->last_ack_bytes);
     pollreactor_update_timer(sq->pr, SQPT_COMMAND, PR_NOW);
 
     // Update retransmit info
@@ -223,6 +263,7 @@ handle_message(struct serialqueue *sq, double eventtime, int len)
     // Calculate receive sequence number
     uint64_t rseq = ((sq->receive_seq & ~MESSAGE_SEQ_MASK)
                      | (sq->input_buf[MESSAGE_POS_SEQ] & MESSAGE_SEQ_MASK));
+    print_recv_info(sq,rseq);
     if (rseq != sq->receive_seq) {
         // New sequence number
         if (rseq < sq->receive_seq)
@@ -503,16 +544,21 @@ static double
 check_send_command(struct serialqueue *sq, int pending, double eventtime)
 {
     if (sq->send_seq - sq->receive_seq >= MAX_PENDING_BLOCKS
-        && sq->receive_seq != (uint64_t)-1)
+        && sq->receive_seq != (uint64_t)-1){
         // Need an ack before more messages can be sent
+        // printf("cur serial %d,wait ack,cur send seq %llu,remain %d ready_bytes,cur receive_seq %llu\n",sq->serial_fd,sq->send_seq,sq->ready_bytes,sq->receive_seq);
         return PR_NEVER;
+    }
     if (sq->send_seq > sq->receive_seq && sq->receive_window) {
         int need_ack_bytes = sq->need_ack_bytes + MESSAGE_MAX;
         if (sq->last_ack_seq < sq->receive_seq)
             need_ack_bytes += sq->last_ack_bytes;
-        if (need_ack_bytes > sq->receive_window)
+        if (need_ack_bytes > sq->receive_window){
             // Wait for ack from past messages before sending next message
+            // sq->wait_ack_seq = sq->send_seq;
+            // printf("cur serial %d,wait ack %llu,cur send seq %llu,cur receive_seq %llu,remain %d ready_bytes,receive_window %d\n",sq->serial_fd,sq->wait_ack_seq,sq->send_seq,sq->receive_seq,sq->ready_bytes,sq->receive_window);
             return PR_NEVER;
+        }
     }
 
     // Check for stalled messages now ready
@@ -588,6 +634,7 @@ command_event(struct serialqueue *sq, double eventtime)
                                    ? eventtime : sq->idle_time);
                 sq->idle_time = idletime + calculate_bittime(sq, buflen);
                 buflen = 0;
+                print_send_info(sq,sq->send_seq);
             }
             if (waketime != PR_NOW)
                 break;
@@ -603,6 +650,7 @@ static void *
 background_thread(void *data)
 {
     struct serialqueue *sq = data;
+    nice(-20);
     pollreactor_run(sq->pr);
 
     pthread_mutex_lock(&sq->lock);
@@ -618,6 +666,9 @@ serialqueue_alloc(int serial_fd, char serial_fd_type, int client_id)
 {
     struct serialqueue *sq = malloc(sizeof(*sq));
     memset(sq, 0, sizeof(*sq));
+    char filename[100];
+    sprintf(filename,"/tmp/klipper_debug_pritf_%d",serial_fd);
+    sq->debug_file = fopen(filename,"w");
     sq->serial_fd = serial_fd;
     sq->serial_fd_type = serial_fd_type;
     sq->client_id = client_id;
@@ -771,18 +822,19 @@ serialqueue_send_batch(struct serialqueue *sq, struct command_queue *cq
                        , struct list_head *msgs)
 {
     // Make sure min_clock is set in list and calculate total bytes
-    int len = 0;
+    int len = 0,count = 0;
     struct queue_message *qm;
     list_for_each_entry(qm, msgs, node) {
         if (qm->min_clock + (1LL<<31) < qm->req_clock
             && qm->req_clock != BACKGROUND_PRIORITY_CLOCK)
             qm->min_clock = qm->req_clock - (1LL<<31);
         len += qm->len;
+        count++;
     }
     if (! len)
         return;
     qm = list_first_entry(msgs, struct queue_message, node);
-
+    // printf("send_batch: cur serial fd %d len=%d count=%d\n",sq->serial_fd,len,count);
     // Add list to cq->stalled_queue
     pthread_mutex_lock(&sq->lock);
     if (list_empty(&cq->ready_queue) && list_empty(&cq->stalled_queue))

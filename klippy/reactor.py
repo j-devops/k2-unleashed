@@ -6,7 +6,7 @@
 import os, gc, select, math, time, logging, queue
 import greenlet
 import chelper, util
-
+import mymodule.mymovie as mymovie
 _NOW = 0.
 _NEVER = 9999999999999999.
 
@@ -97,7 +97,8 @@ class SelectReactor:
     def __init__(self, gc_checking=False):
         # Main code
         self._process = False
-        self.monotonic = chelper.get_ffi()[1].get_monotonic
+        # self.monotonic = chelper.get_ffi()[1].get_monotonic
+        self.monotonic = mymovie.Py_get_monotonic
         # Python garbage collection
         self._check_gc = gc_checking
         self._last_gc_times = [0., 0., 0.]
@@ -119,7 +120,9 @@ class SelectReactor:
     # Timers
     def update_timer(self, timer_handler, waketime):
         timer_handler.waketime = waketime
-        self._next_timer = min(self._next_timer, waketime)
+        if waketime < self._next_timer:
+            self._next_timer = waketime
+        # self._next_timer = min(self._next_timer, waketime)
     def register_timer(self, callback, waketime=NEVER):
         timer_handler = ReactorTimer(callback, waketime)
         timers = list(self._timers)
@@ -336,6 +339,12 @@ class PollReactor(SelectReactor):
         self._g_dispatch = g_dispatch = greenlet.getcurrent()
         busy = True
         eventtime = self.monotonic()
+        try:
+            logging.info("_dispatch_loop current nice = %d", os.nice(0))
+            val = os.nice(-10)
+            logging.info("_dispatch_loop new nice = %d", val)
+        except:
+            pass
         while self._process:
             timeout = self._check_timers(eventtime, busy)
             busy = False

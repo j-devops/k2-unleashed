@@ -349,3 +349,25 @@ stepper_shutdown(void)
     }
 }
 DECL_SHUTDOWN(stepper_shutdown);
+
+// 1. 此处两个函数需要拷贝到 stepper.c文件的末尾
+int32_t step_prtouch_get_pos_v65(int32_t step_oid)
+{
+    struct stepper *s = stepper_oid_lookup(step_oid);
+    uint32_t position = s->position;
+    uint32_t count = s->count;
+    int32_t flags = s->flags;
+    position -= (HAVE_SINGLE_SCHEDULE && flags & SF_SINGLE_SCHED ? count : count / 2);
+    position = (position & 0x80000000 ? -position : position);
+    return (int32_t)(position - POSITION_BIAS);
+}
+int32_t step_prtouch_get_ivt(int32_t step_oid)
+{
+    struct stepper *s = stepper_oid_lookup(step_oid);
+    return ((s->flags & SF_NEXT_DIR) ? -1 : +1) * (s->count ? s->interval : 0);
+}
+int32_t step_prtouch_get_cnt(int32_t step_oid)
+{
+    struct stepper *s = stepper_oid_lookup(step_oid);
+    return s->count;
+}

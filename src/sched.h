@@ -37,6 +37,7 @@ uint8_t sched_check_wake(struct task_wake *w);
 uint8_t sched_is_shutdown(void);
 void sched_clear_shutdown(void);
 void sched_try_shutdown(uint_fast8_t reason);
+void sched_fake_shutdown(uint_fast8_t reason);
 void sched_shutdown(uint_fast8_t reason) __noreturn;
 void sched_report_shutdown(void);
 void sched_main(void);

@@ -71,7 +71,9 @@ class RunoutHelper:
             return
         # Determine "printing" status
         idle_timeout = self.printer.lookup_object("idle_timeout")
-        is_printing = idle_timeout.get_status(eventtime)["state"] == "Printing"
+        print_stats = self.printer.lookup_object('print_stats')
+        is_printing = print_stats.state == "printing"
+        # is_printing = idle_timeout.get_status(eventtime)["state"] == "Printing"
         # Perform filament action associated with status change (if any)
         if is_filament_present:
             if not is_printing and self.insert_gcode is not None:
@@ -105,7 +107,7 @@ class RunoutHelper:
 
 class SwitchSensor:
     def __init__(self, config):
-        printer = config.get_printer()
+        self.printer = printer = config.get_printer()
         buttons = printer.load_object(config, 'buttons')
         switch_pin = config.get('switch_pin')
         buttons.register_buttons([switch_pin], self._button_handler)
@@ -113,6 +115,8 @@ class SwitchSensor:
         self.get_status = self.runout_helper.get_status
     def _button_handler(self, eventtime, state):
         self.runout_helper.note_filament_present(state)
+        if state:
+            self.printer.send_event("box:extrude_process_stage7")
 
 def load_config_prefix(config):
     return SwitchSensor(config)

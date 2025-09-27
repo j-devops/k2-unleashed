@@ -25,6 +25,7 @@ void console_sleep(sigset_t *sigset);
 int timer_check_periodic(uint32_t *ts);
 void timer_disable_signals(void);
 void timer_enable_signals(void);
+void udelay(uint32_t usecs);
 
 // watchdog.c
 int watchdog_setup(void);

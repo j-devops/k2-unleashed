@@ -67,8 +67,9 @@ class Fan:
         self.last_fan_value = value
     def set_speed_from_command(self, value):
         toolhead = self.printer.lookup_object('toolhead')
-        toolhead.register_lookahead_callback((lambda pt:
-                                              self.set_speed(pt, value)))
+        self.set_speed(toolhead.print_time, value)
+        # toolhead.register_lookahead_callback((lambda pt:
+        #                                       self.set_speed(pt, value)))
     def _handle_request_restart(self, print_time):
         self.set_speed(print_time, 0.)
 

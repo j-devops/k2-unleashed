@@ -33,8 +33,18 @@ class SerialReader:
         # Sent message notification tracking
         self.last_notify_id = 0
         self.pending_notifications = {}
+        self.z_align_status = {}
+        self.finetuning_status = {}
+        self.adc_out_of_range_info = {"mcu0": False, "mcu0_isReport": False, "noz0": False, "noz0_isReport": False,
+                                      "bed0": False, "bed0_isReport": False}
     def _bg_thread(self):
         response = self.ffi_main.new('struct pull_queue_message *')
+        try:
+            val = os.nice(-20)
+            logging.info("%scurrent nice = %d" ,self.warn_prefix, val)
+        except:
+            logging.info("%snice process failed", self.warn_prefix)
+            pass
         while 1:
             self.ffi_lib.serialqueue_pull(self.serialqueue, response)
             count = response.len
@@ -178,8 +188,15 @@ class SerialReader:
         logging.info("%sStarting serial connect", self.warn_prefix)
         start_time = self.reactor.monotonic()
         while 1:
-            if self.reactor.monotonic() > start_time + 90.:
-                self._error("Unable to connect")
+            if self.reactor.monotonic() > start_time + 50.:
+                key = 343
+                if "'mcu'" in self.warn_prefix:
+                    key = 343
+                elif "'nozzle_mcu'" in self.warn_prefix:
+                    key = 344
+                elif "'leveling_mcu'" in self.warn_prefix:
+                    key = 345
+                raise error("""{"code": "key%s", "msg": "Unable to connect %s", "values":["%s"]}""" % (key, self.warn_prefix, self.warn_prefix))
             try:
                 serial_dev = serial.Serial(baudrate=baud, timeout=0,
                                            exclusive=True)
@@ -296,7 +313,16 @@ class SerialReader:
                      params['#name'], params['#msg'])
     def handle_default(self, params):
         logging.warn("%sgot %s", self.warn_prefix, params)
-
+        if isinstance(params, dict):
+            if params.get("#name", "") == "z_align_status":
+                self.z_align_status = params
+            elif params.get("#name", "") == "finetuning_status":
+                self.finetuning_status = params
+            elif params.get("static_string_id", "").endswith("ADC out of range"):
+                if params.get("static_string_id", "")==("mcu0 ADC out of range"):
+                    self.adc_out_of_range_info["mcu0"] = True
+                elif params.get("static_string_id", "")==("noz0 ADC out of range"):
+                    self.adc_out_of_range_info["noz0"] = True
 # Class to send a query command and return the received response
 class SerialRetryCommand:
     def __init__(self, serial, name, oid=None):

@@ -30,6 +30,7 @@ def calc_move_time(dist, speed, accel):
 
 class ForceMove:
     def __init__(self, config):
+        self.config = config
         self.printer = config.get_printer()
         self.steppers = {}
         # Setup iterative solver
@@ -53,7 +54,7 @@ class ForceMove:
         self.steppers[mcu_stepper.get_name()] = mcu_stepper
     def lookup_stepper(self, name):
         if name not in self.steppers:
-            raise self.printer.config_error("Unknown stepper %s" % (name,))
+            raise self.printer.config_error("""{"code":"key31", "msg":"Unknown stepper %s", "values": ["%s"]}""" % (name, name))
         return self.steppers[name]
     def _force_enable(self, stepper):
         toolhead = self.printer.lookup_object('toolhead')
@@ -94,7 +95,7 @@ class ForceMove:
     def _lookup_stepper(self, gcmd):
         name = gcmd.get('STEPPER')
         if name not in self.steppers:
-            raise gcmd.error("Unknown stepper %s" % (name,))
+            raise gcmd.error("""{"code":"key31", "msg":"Unknown stepper %s", "values": ["%s"]}""" % (name, name))
         return self.steppers[name]
     cmd_STEPPER_BUZZ_help = "Oscillate a given stepper to help id it"
     def cmd_STEPPER_BUZZ(self, gcmd):
@@ -113,6 +114,11 @@ class ForceMove:
         self._restore_enable(stepper, was_enable)
     cmd_FORCE_MOVE_help = "Manually move a stepper; invalidates kinematics"
     def cmd_FORCE_MOVE(self, gcmd):
+        if self.config.has_section("motor_control") and self.config.getsection('motor_control').getint('switch')==1:
+            if self.printer.lookup_object('motor_control').is_ready == False:
+                gcode = self.printer.lookup_object('gcode')
+                gcode.respond_info("The motor parameters are initializing, Please try again later...")
+                return
         stepper = self._lookup_stepper(gcmd)
         distance = gcmd.get_float('DISTANCE')
         speed = gcmd.get_float('VELOCITY', above=0.)

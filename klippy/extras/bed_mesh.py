@@ -6,7 +6,8 @@
 # This file may be distributed under the terms of the GNU GPLv3 license.
 import logging, math, json, collections
 from . import probe
-
+import mymodule.mymovie as mymovie
+import numpy as np
 PROFILE_VERSION = 1
 PROFILE_OPTIONS = {
     'min_x': float, 'max_x': float, 'min_y': float, 'max_y': float,
@@ -87,27 +88,35 @@ def parse_gcmd_coord(gcmd, name):
 class BedMesh:
     FADE_DISABLE = 0x7FFFFFFF
     def __init__(self, config):
+        self._move_array = [0.0]*(9+4)
+        self.move_array = np.array(self._move_array, dtype=np.float64)
+        self.move_array_addr_int = self.move_array.ctypes.data
         self.printer = config.get_printer()
         self.printer.register_event_handler("klippy:connect",
                                             self.handle_connect)
         self.last_position = [0., 0., 0., 0.]
         self.bmc = BedMeshCalibrate(config, self)
         self.z_mesh = None
+        self.z_mesh_bak = None
         self.toolhead = None
         self.horizontal_move_z = config.getfloat('horizontal_move_z', 5.)
-        self.fade_start = config.getfloat('fade_start', 1.)
-        self.fade_end = config.getfloat('fade_end', 0.)
-        self.fade_dist = self.fade_end - self.fade_start
-        if self.fade_dist <= 0.:
-            self.fade_start = self.fade_end = self.FADE_DISABLE
+        self.__fade_start = config.getfloat('fade_start', 1.)
+        self.__fade_end = config.getfloat('fade_end', 0.)
+        self.__fade_dist = self.__fade_end - self.__fade_start
+        if self.__fade_dist <= 0.:
+            self.__fade_start = self.__fade_end = self.FADE_DISABLE
         self.log_fade_complete = False
         self.base_fade_target = config.getfloat('fade_target', None)
         self.fade_target = 0.
         self.gcode = self.printer.lookup_object('gcode')
-        self.splitter = MoveSplitter(config, self.gcode)
+        # self.splitter = MoveSplitter(config, self.gcode)
+        self.splitter = mymovie.PyMoveSplitter(config.getfloat(
+            'split_delta_z', .025, minval=0.01), config.getfloat(
+            'move_check_distance', 5., minval=1.))
         # setup persistent storage
         self.pmgr = ProfileManager(config, self)
         self.save_profile = self.pmgr.save_profile
+        self.load_profile = self.pmgr.load_profile
         # register gcodes
         self.gcode.register_command(
             'BED_MESH_OUTPUT', self.cmd_BED_MESH_OUTPUT,
@@ -121,17 +130,46 @@ class BedMesh:
         self.gcode.register_command(
             'BED_MESH_OFFSET', self.cmd_BED_MESH_OFFSET,
             desc=self.cmd_BED_MESH_OFFSET_help)
+        self.gcode.register_command(
+            'BED_MESH_SAVE', self.cmd_BED_MESH_SAVE,
+            desc=self.cmd_BED_MESH_SAVE_help)
+        self.gcode.register_command(
+            'BED_MESH_RESTORE', self.cmd_BED_MESH_RESTORE,
+            desc=self.cmd_BED_MESH_RESTORE_help)
+        webhooks = self.printer.lookup_object('webhooks')
+        webhooks.register_endpoint("get_mesh", self._get_mesh)
+        webhooks.register_endpoint("update_mesh", self.update_mesh)
         # Register transform
         gcode_move = self.printer.load_object(config, 'gcode_move')
         gcode_move.set_move_transform(self)
         # initialize status dict
+        self.update_status()  
+        self.move_array[9]=self.__fade_start
+        self.move_array[10]=self.__fade_end
+        self.move_array[11]=self.__fade_dist
+    def _get_mesh(self, web_request):
+        probed_matrix = [[]]
+        try:
+            probed_matrix = self.z_mesh.get_probed_matrix()
+        except Exception as err:
+            logging.error(err)
+        web_request.send({'probed_matrix': probed_matrix})
+    def update_mesh(self, web_request):
+        probed_matrix = web_request.get("probed_matrix", [[]])
+        self.z_mesh.update_mesh_probed_matrix(probed_matrix)
+        self.set_mesh(self.z_mesh)
         self.update_status()
+        self.save_profile(self.pmgr.get_current_profile())
+        self.load_profile(self.pmgr.get_current_profile())
+        self.gcode.run_script_from_command('CXSAVE_CONFIG')
+        probed_matrix = self.z_mesh.get_probed_matrix()
+        web_request.send({'probed_matrix': probed_matrix})
     def handle_connect(self):
         self.toolhead = self.printer.lookup_object('toolhead')
         self.bmc.print_generated_points(logging.info)
         self.pmgr.initialize()
     def set_mesh(self, mesh):
-        if mesh is not None and self.fade_end != self.FADE_DISABLE:
+        if mesh is not None and self.__fade_end != self.FADE_DISABLE:
             self.log_fade_complete = True
             if self.base_fade_target is None:
                 self.fade_target = mesh.avg_z
@@ -149,27 +187,30 @@ class BedMesh:
                         "range\nmin: %.4f, max: %.4f, fade_target: %.4f"
                         % (min_z, max_z, err_target))
             min_z, max_z = mesh.get_z_range()
-            if self.fade_dist <= max(abs(min_z), abs(max_z)):
+            if self.__fade_dist <= max(abs(min_z), abs(max_z)):
                 self.z_mesh = None
                 self.fade_target = 0.
                 raise self.gcode.error(
                     "bed_mesh:  Mesh extends outside of the fade range, "
                     "please see the fade_start and fade_end options in"
                     "example-extras.cfg. fade distance: %.2f mesh min: %.4f"
-                    "mesh max: %.4f" % (self.fade_dist, min_z, max_z))
+                    "mesh max: %.4f" % (self.__fade_dist, min_z, max_z))
         else:
             self.fade_target = 0.
         self.z_mesh = mesh
-        self.splitter.initialize(mesh, self.fade_target)
+        if self.z_mesh is not None:
+            self.splitter.initialize(mesh.info_array_addr_int, self.fade_target)
+        else:
+            self.splitter.initialize(0, self.fade_target)
         # cache the current position before a transform takes place
         gcode_move = self.printer.lookup_object('gcode_move')
         gcode_move.reset_last_position()
         self.update_status()
     def get_z_factor(self, z_pos):
-        if z_pos >= self.fade_end:
-            return 0.
-        elif z_pos >= self.fade_start:
-            return (self.fade_end - z_pos) / self.fade_dist
+        if z_pos >= self.__fade_end:
+            return 0.0
+        elif z_pos >= self.__fade_start:
+            return (self.__fade_end - z_pos) / self.__fade_dist
         else:
             return 1.
     def get_position(self):
@@ -184,21 +225,27 @@ class BedMesh:
             max_adj = self.z_mesh.calc_z(x, y)
             factor = 1.
             z_adj = max_adj - self.fade_target
-            if min(z, (z - max_adj)) >= self.fade_end:
+            if min(z, (z - max_adj)) >= self.__fade_end:
                 # Fade out is complete, no factor
                 factor = 0.
-            elif max(z, (z - max_adj)) >= self.fade_start:
+            elif max(z, (z - max_adj)) >= self.__fade_start:
                 # Likely in the process of fading out adjustment.
                 # Because we don't yet know the gcode z position, use
                 # algebra to calculate the factor from the toolhead pos
-                factor = ((self.fade_end + self.fade_target - z) /
-                          (self.fade_dist - z_adj))
+                factor = ((self.__fade_end + self.fade_target - z) /
+                          (self.__fade_dist - z_adj))
                 factor = constrain(factor, 0., 1.)
             final_z_adj = factor * z_adj + self.fade_target
             self.last_position[:] = [x, y, z - final_z_adj, e]
         return list(self.last_position)
+    def set_z_temp_compensation(self):
+        if self.z_mesh is None:
+            return
+        self.z_mesh.set_z_temp_compensation()
     def move(self, newpos, speed):
-        factor = self.get_z_factor(newpos[2])
+        # factor = self.get_z_factor(newpos[2])
+        factor = mymovie.Py_get_z_factor(self.move_array_addr_int,newpos[2])
+        # if self.z_mesh is None or not factor:
         if self.z_mesh is None or not factor:
             # No mesh calibrated, or mesh leveling phased out.
             x, y, z, e = newpos
@@ -209,12 +256,30 @@ class BedMesh:
                     % (z, self.fade_target))
             self.toolhead.move([x, y, z + self.fade_target, e], speed)
         else:
-            self.splitter.build_move(self.last_position, newpos, factor)
-            while not self.splitter.traverse_complete:
-                split_move = self.splitter.split()
-                if split_move:
-                    self.toolhead.move(split_move, speed)
-                else:
+            # self.move_array[0:9] = self.last_position+newpos+[factor]
+            self.move_array[0]=self.last_position[0]
+            self.move_array[1]=self.last_position[1]
+            self.move_array[2]=self.last_position[2]
+            self.move_array[3]=self.last_position[3]
+            self.move_array[4]=newpos[0]
+            self.move_array[5]=newpos[1]
+            self.move_array[6]=newpos[2]
+            self.move_array[7]=newpos[3]
+            self.move_array[8]=factor
+            self.move_array[12]=speed
+            self.set_z_temp_compensation()
+            self.splitter.build_move(self.move_array_addr_int)
+            while 1:
+                self.splitter.split_for_loop(self.move_array_addr_int)
+                if self.move_array[4] == 0:
+                    self.toolhead.simple_move(self.move_array[0:4])
+                elif self.move_array[4] == 7:
+                    break
+                elif self.move_array[4] == -1:
+                    raise self.gcode.error(
+                        "bed_mesh: Slice distance is negative "
+                        "or greater than entire move length")
+                elif self.move_array[4] == -2:
                     raise self.gcode.error(
                         "Mesh Leveling: Error splitting move ")
         self.last_position[:] = newpos
@@ -277,6 +342,13 @@ class BedMesh:
             gcode_move.reset_last_position()
         else:
             gcmd.respond_info("No mesh loaded to offset")
+    cmd_BED_MESH_SAVE_help = "Save the Mesh to bak"
+    def cmd_BED_MESH_SAVE(self, gcmd):
+        if self.z_mesh is not None:
+            self.z_mesh_bak = self.z_mesh
+    cmd_BED_MESH_RESTORE_help = "Restore the bak Mesh to Mesh"
+    def cmd_BED_MESH_RESTORE(self, gcmd):
+        self.set_mesh(self.z_mesh_bak)
 
 
 class BedMeshCalibrate:
@@ -316,7 +388,7 @@ class BedMeshCalibrate:
         x_dist = math.floor(x_dist * 100) / 100
         y_dist = math.floor(y_dist * 100) / 100
         if x_dist < 1. or y_dist < 1.:
-            raise error("bed_mesh: min/max points too close together")
+            raise error("""{"code":"key43", "msg":"bed_mesh: min/max points too close together", "values": []}""")
 
         if self.radius is not None:
             # round bed, min/max needs to be recalculated
@@ -716,7 +788,7 @@ class BedMeshCalibrate:
                         "Probed table length: %d Probed Table:\n%s") %
                     (len(probed_matrix), str(probed_matrix)))
 
-        z_mesh = ZMesh(params)
+        z_mesh = ZMesh(params,self.printer)
         try:
             z_mesh.build_mesh(probed_matrix)
         except BedMeshError as e:
@@ -744,77 +816,29 @@ class BedMeshCalibrate:
                 "  %-4d| %-17s| %-25s| %s" % (i, gen_pt, probed_pt, corr_pt))
 
 
-class MoveSplitter:
-    def __init__(self, config, gcode):
-        self.split_delta_z = config.getfloat(
-            'split_delta_z', .025, minval=0.01)
-        self.move_check_distance = config.getfloat(
-            'move_check_distance', 5., minval=3.)
-        self.z_mesh = None
-        self.fade_offset = 0.
-        self.gcode = gcode
-    def initialize(self, mesh, fade_offset):
-        self.z_mesh = mesh
-        self.fade_offset = fade_offset
-    def build_move(self, prev_pos, next_pos, factor):
-        self.prev_pos = tuple(prev_pos)
-        self.next_pos = tuple(next_pos)
-        self.current_pos = list(prev_pos)
-        self.z_factor = factor
-        self.z_offset = self._calc_z_offset(prev_pos)
-        self.traverse_complete = False
-        self.distance_checked = 0.
-        axes_d = [self.next_pos[i] - self.prev_pos[i] for i in range(4)]
-        self.total_move_length = math.sqrt(sum([d*d for d in axes_d[:3]]))
-        self.axis_move = [not isclose(d, 0., abs_tol=1e-10) for d in axes_d]
-    def _calc_z_offset(self, pos):
-        z = self.z_mesh.calc_z(pos[0], pos[1])
-        offset = self.fade_offset
-        return self.z_factor * (z - offset) + offset
-    def _set_next_move(self, distance_from_prev):
-        t = distance_from_prev / self.total_move_length
-        if t > 1. or t < 0.:
-            raise self.gcode.error(
-                "bed_mesh: Slice distance is negative "
-                "or greater than entire move length")
-        for i in range(4):
-            if self.axis_move[i]:
-                self.current_pos[i] = lerp(
-                    t, self.prev_pos[i], self.next_pos[i])
-    def split(self):
-        if not self.traverse_complete:
-            if self.axis_move[0] or self.axis_move[1]:
-                # X and/or Y axis move, traverse if necessary
-                while self.distance_checked + self.move_check_distance \
-                        < self.total_move_length:
-                    self.distance_checked += self.move_check_distance
-                    self._set_next_move(self.distance_checked)
-                    next_z = self._calc_z_offset(self.current_pos)
-                    if abs(next_z - self.z_offset) >= self.split_delta_z:
-                        self.z_offset = next_z
-                        return self.current_pos[0], self.current_pos[1], \
-                            self.current_pos[2] + self.z_offset, \
-                            self.current_pos[3]
-            # end of move reached
-            self.current_pos[:] = self.next_pos
-            self.z_offset = self._calc_z_offset(self.current_pos)
-            # Its okay to add Z-Offset to the final move, since it will not be
-            # used again.
-            self.current_pos[2] += self.z_offset
-            self.traverse_complete = True
-            return self.current_pos
-        else:
-            # Traverse complete
-            return None
+
 
 
 class ZMesh:
-    def __init__(self, params):
+    def __init__(self, params,printer):
+        self._info_array = [0.0]*(12+1)
+        self.info_array = np.array(self._info_array, dtype=np.float64)
+        self.info_array_addr_int = self.info_array.ctypes.data
+
+        self.printer = printer
+        self.isenable = True
+        self.info_array[1]=self.isenable
         self.probed_matrix = self.mesh_matrix = None
+        if self.mesh_matrix is None:
+            self.info_array[4]=0
+        else:
+            self.info_array[4]=1
+            self.__mesh_matrix[0:] = self.mesh_matrix
         self.mesh_params = params
+        self.uuid = self.info_array[0]=printer.get_reactor().monotonic()
         self.avg_z = 0.
         self.mesh_offsets = [0., 0.]
-        logging.debug('bed_mesh: probe/mesh parameters:')
+        self.info_array[2:4] = self.mesh_offsets
         for key, value in self.mesh_params.items():
             logging.debug("%s :  %s" % (key, value))
         self.mesh_x_min = params['min_x']
@@ -839,6 +863,10 @@ class ZMesh:
         py_cnt = params['y_count']
         self.mesh_x_count = (px_cnt - 1) * mesh_x_pps + px_cnt
         self.mesh_y_count = (py_cnt - 1) * mesh_y_pps + py_cnt
+
+        self.__mesh_matrix = np.full(self.mesh_y_count * self.mesh_x_count, 0., dtype=np.float64)
+        self.__mesh_matrix_addr = self.__mesh_matrix.ctypes.data
+        self.info_array[12]=self.__mesh_matrix_addr
         self.x_mult = mesh_x_pps + 1
         self.y_mult = mesh_y_pps + 1
         logging.debug("bed_mesh: Mesh grid size - X:%d, Y:%d"
@@ -847,6 +875,19 @@ class ZMesh:
                            (self.mesh_x_count - 1)
         self.mesh_y_dist = (self.mesh_y_max - self.mesh_y_min) / \
                            (self.mesh_y_count - 1)
+        self.gcode = self.printer.lookup_object('gcode')
+        if "BED_MESH_SET_DISABLE" not in self.gcode.ready_gcode_handlers:
+            self.gcode.register_command(
+                'BED_MESH_SET_DISABLE', self.cmd_BED_MESH_SET_DISABLE,
+                desc=self.cmd_BED_MESH_SET_DISABLE_helper)
+        if "BED_MESH_SET_ENABLE" not in self.gcode.ready_gcode_handlers:
+            self.gcode.register_command(
+                'BED_MESH_SET_ENABLE', self.cmd_BED_MESH_SET_ENABLE,
+                desc=self.cmd_BED_MESH_SET_ENABLE_helper)
+        self.info_array[5:11]=[self.mesh_x_min,self.mesh_x_count,self.mesh_x_dist,self.mesh_y_min,self.mesh_y_count,self.mesh_y_dist]
+        self.info_array[11] = 0.0
+        self.last_z_temp_compensation = self.info_array[11]
+        self.z_temp_compensation_callbak=None
     def get_mesh_matrix(self):
         if self.mesh_matrix is not None:
             return [[round(z, 6) for z in line]
@@ -857,6 +898,9 @@ class ZMesh:
             return [[round(z, 6) for z in line]
                     for line in self.probed_matrix]
         return [[]]
+    def update_mesh_probed_matrix(self, probed_matrix):
+        if self.probed_matrix is not None:
+            self.probed_matrix = tuple(map(tuple, probed_matrix))
     def get_mesh_params(self):
         return self.mesh_params
     def print_probed_matrix(self, print_func):
@@ -904,21 +948,45 @@ class ZMesh:
         for i, o in enumerate(offsets):
             if o is not None:
                 self.mesh_offsets[i] = o
+        self.info_array[2:4] = self.mesh_offsets
     def get_x_coordinate(self, index):
         return self.mesh_x_min + self.mesh_x_dist * index
     def get_y_coordinate(self, index):
         return self.mesh_y_min + self.mesh_y_dist * index
+
+    def cmd_BED_MESH_SET_DISABLE(self, gcmd):
+        self.isenable = False
+        self.info_array[1]=self.isenable
+    cmd_BED_MESH_SET_DISABLE_helper = " set  MESH disable"
+    def cmd_BED_MESH_SET_ENABLE(self, gcmd):
+        self.isenable = True
+        self.info_array[1]=self.isenable
+    cmd_BED_MESH_SET_ENABLE_helper = "set  MESH enable "
     def calc_z(self, x, y):
-        if self.mesh_matrix is not None:
-            tbl = self.mesh_matrix
-            tx, xidx = self._get_linear_index(x + self.mesh_offsets[0], 0)
-            ty, yidx = self._get_linear_index(y + self.mesh_offsets[1], 1)
-            z0 = lerp(tx, tbl[yidx][xidx], tbl[yidx][xidx+1])
-            z1 = lerp(tx, tbl[yidx+1][xidx], tbl[yidx+1][xidx+1])
-            return lerp(ty, z0, z1)
+        return mymovie.Py_zmesh_calc_c(x,y,self.info_array_addr_int)
+        if self.isenable:
+            if self.mesh_matrix is not None:
+                tbl = self.mesh_matrix
+                tx, xidx = self._get_linear_index(x + self.mesh_offsets[0], 0)
+                ty, yidx = self._get_linear_index(y + self.mesh_offsets[1], 1)
+                z0 = lerp(tx, tbl[yidx][xidx], tbl[yidx][xidx+1])
+                z1 = lerp(tx, tbl[yidx+1][xidx], tbl[yidx+1][xidx+1])
+                return lerp(ty, z0, z1)
+            else:
+                pass
+                # No mesh table generated, no z-adjustment
+        return 0.
+    def set_z_temp_compensation_callbak(self,ck):
+        self.z_temp_compensation_callbak=ck
+    def set_z_temp_compensation(self):
+        if self.z_temp_compensation_callbak is not None:
+            temp = self.z_temp_compensation_callbak()
         else:
-            # No mesh table generated, no z-adjustment
-            return 0.
+            temp = 0.0
+        if self.last_z_temp_compensation!= temp:
+            self.last_z_temp_compensation = temp
+            self.info_array[11] = self.last_z_temp_compensation
+
     def get_z_range(self):
         if self.mesh_matrix is not None:
             mesh_min = min([min(x) for x in self.mesh_matrix])
@@ -946,6 +1014,11 @@ class ZMesh:
         return constrain(t, 0., 1.), idx
     def _sample_direct(self, z_matrix):
         self.mesh_matrix = z_matrix
+        if self.mesh_matrix is None:
+            self.info_array[4]=0
+        else:
+            self.info_array[4]=1
+            self.__mesh_matrix[0:]=self.mesh_matrix
     def _sample_lagrange(self, z_matrix):
         x_mult = self.x_mult
         y_mult = self.y_mult
@@ -972,6 +1045,11 @@ class ZMesh:
                     continue
                 y = self.get_y_coordinate(j)
                 self.mesh_matrix[j][i] = self._calc_lagrange(ypts, y, i, 1)
+        if self.mesh_matrix is None:
+            self.info_array[4]=0
+        else:
+            self.info_array[4]=1
+            self.__mesh_matrix[0:] = [item for row in self.mesh_matrix for item in row]
     def _get_lagrange_coords(self):
         xpts = []
         ypts = []
@@ -1025,6 +1103,11 @@ class ZMesh:
                     continue
                 pts = self._get_y_ctl_pts(x, y)
                 self.mesh_matrix[y][x] = self._cardinal_spline(pts, c)
+        if self.mesh_matrix is None:
+            self.info_array[4]=0
+        else:
+            self.info_array[4]=1
+            self.__mesh_matrix[0:] = [item for row in self.mesh_matrix for item in row]
     def _get_x_ctl_pts(self, x, y):
         # Fetch control points and t for a X value in the mesh
         x_mult = self.x_mult
@@ -1194,18 +1277,21 @@ class ProfileManager:
             % (prof_name))
     def load_profile(self, prof_name):
         profile = self.profiles.get(prof_name, None)
-        if profile is None:
-            raise self.gcode.error(
-                "bed_mesh: Unknown profile [%s]" % prof_name)
-        probed_matrix = profile['points']
-        mesh_params = profile['mesh_params']
-        z_mesh = ZMesh(mesh_params)
-        try:
-            z_mesh.build_mesh(probed_matrix)
-        except BedMeshError as e:
-            raise self.gcode.error(str(e))
-        self.current_profile = prof_name
-        self.bedmesh.set_mesh(z_mesh)
+        if profile is not None:
+            probed_matrix = profile['points']
+            mesh_params = profile['mesh_params']
+            z_mesh = ZMesh(mesh_params,self.printer)
+            try:
+                z_mesh.build_mesh(probed_matrix)
+            except BedMeshError as e:
+                raise self.gcode.error(str(e))
+            self.current_profile = prof_name
+            self.bedmesh.set_mesh(z_mesh)
+        else:
+            self.gcode.respond_info("bed_mesh: Unknown profile [%s]" % (prof_name,))
+            # raise self.gcode.error(
+            #     "bed_mesh: Unknown profile [%s]" % prof_name)
+
     def remove_profile(self, prof_name):
         if prof_name in self.profiles:
             configfile = self.printer.lookup_object('configfile')

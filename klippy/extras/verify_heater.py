@@ -56,6 +56,11 @@ class HeaterCheck:
                 self.error = 0.
             self.last_target = target
             return eventtime + 1.
+        if self.heater_name == "chamber_heater" and target > 40 and self.heater.last_pwm_value == 0:
+            # Chamber heater is not heating
+            if temp <= target + self.hysteresis:
+                self.error = 0.
+            return eventtime + 1.
         self.error += (target - self.hysteresis) - temp
         if not self.approaching_target:
             if target != self.last_target:
@@ -67,6 +72,7 @@ class HeaterCheck:
                 self.goal_systime = eventtime + self.check_gain_time
             elif self.error >= self.max_error:
                 # Failure due to inability to maintain target temperature
+                logging.error("verify_heater:heater_fault heater_name:%s, temp:%s, target:%s, hysteresis:%s, self.error:%s, self.max_error:%s" % (self.heater_name, temp, target, self.hysteresis, self.error, self.max_error))
                 return self.heater_fault()
         elif temp >= self.goal_temp:
             # Temperature approaching target - reset checks
@@ -86,7 +92,23 @@ class HeaterCheck:
     def heater_fault(self):
         msg = "Heater %s not heating at expected rate" % (self.heater_name,)
         logging.error(msg)
-        self.printer.invoke_shutdown(msg + HINT_THERMAL)
+        code_key = "key558"
+        if self.heater_name == "extruder":
+            code_key = "key564"
+        elif self.heater_name == "heater_bed":
+            code_key = "key565"
+        elif self.heater_name == "chamber_heater":
+            code_key = "key559"
+        m = """{"code":"%s","msg":"Heater %s not heating at expected rate"}""" % (code_key, self.heater_name)
+        try:
+            gcode = self.printer.lookup_object('gcode')
+            if gcode:
+                gcode.run_script_from_command("M140 S0")
+                gcode.run_script_from_command("M104 S0")
+                gcode.run_script_from_command("M141 S0")
+        except Exception as err:
+            logging.error(err)
+        self.printer.invoke_shutdown(m)
         return self.printer.get_reactor().NEVER
 
 def load_config_prefix(config):

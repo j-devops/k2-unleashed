@@ -73,6 +73,7 @@ class EnableTracking:
 # Global stepper enable line tracking
 class PrinterStepperEnable:
     def __init__(self, config):
+        self.config = config
         self.printer = config.get_printer()
         self.enable_lines = {}
         self.printer.register_event_handler("gcode:request_restart",
@@ -89,6 +90,11 @@ class PrinterStepperEnable:
         enable = setup_enable_pin(self.printer, config.get('enable_pin', None))
         self.enable_lines[name] = EnableTracking(mcu_stepper, enable)
     def motor_off(self):
+        vsd = self.printer.lookup_object('virtual_sdcard')
+        vsd.bed_mesh_calibate_state = False
+        if self.config.has_section("z_align"):
+            z_align = self.printer.lookup_object('z_align')
+            z_align.is_already_zodwn = False
         toolhead = self.printer.lookup_object('toolhead')
         toolhead.dwell(DISABLE_STALL_TIME)
         print_time = toolhead.get_last_move_time()

@@ -30,7 +30,11 @@ struct pull_move {
     double start_x, start_y, start_z;
     double x_r, y_r, z_r;
 };
-
+typedef struct{
+    double extru_last_position;
+    double next_move_time;
+}append_return_t;
+append_return_t trapq_append_from_moveq(struct trapq *tq_kinematic, struct trapq *tq_extruder,double next_move_time,unsigned int move_data_h,int move_num);
 struct move *move_alloc(void);
 void trapq_append(struct trapq *tq, double print_time
                   , double accel_t, double cruise_t, double decel_t
