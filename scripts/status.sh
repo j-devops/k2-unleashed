@@ -125,10 +125,10 @@ if [ -n "$REMOTE_CFG" ]; then
     fi
 
     # Check web dashboard
-    if ssh_cmd "test -f /usr/data/www/k2-monitor/index.html"; then
+    if ssh_cmd "test -f /usr/data/www/k2/index.html"; then
         echo -e "${GREEN}✓${NC} Web Dashboard installed"
         PRINTER_IP=$(ssh_cmd "hostname -I | awk '{print \$1}'" 2>/dev/null || echo "$PRINTER_HOST")
-        echo "  URL: http://${PRINTER_IP}:8080/index.html"
+        echo "  URL: http://${PRINTER_IP}:4408/k2/"
     else
         echo -e "${YELLOW}○${NC} Web Dashboard not installed"
     fi

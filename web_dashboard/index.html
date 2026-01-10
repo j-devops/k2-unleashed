@@ -520,6 +520,94 @@
             border-color: #4CAF50;
             color: #fff;
         }
+
+        /* Diagnostics tab styles */
+        .test-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .test-button {
+            background: #3a3a3a;
+            border: 2px solid #4a4a4a;
+            color: #fff;
+            padding: 15px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-align: center;
+        }
+
+        .test-button:hover:not(:disabled) {
+            background: #4a4a4a;
+            border-color: #4CAF50;
+        }
+
+        .test-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .diagnostics-console {
+            background: #1a1a1a;
+            border: 1px solid #3a3a3a;
+            border-radius: 4px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            max-height: 500px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .console-line {
+            margin: 4px 0;
+            padding: 2px 0;
+        }
+
+        .console-line.info {
+            color: #2196F3;
+        }
+
+        .console-line.success {
+            color: #4CAF50;
+        }
+
+        .console-line.warning {
+            color: #ff9800;
+        }
+
+        .console-line.error {
+            color: #f44336;
+        }
+
+        .console-line.command {
+            color: #9C27B0;
+            font-weight: 600;
+        }
+
+        .input-group {
+            margin: 10px 0;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #999;
+        }
+
+        .input-group input, .input-group select {
+            width: 100%;
+            padding: 8px;
+            background: #1a1a1a;
+            border: 1px solid #3a3a3a;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 14px;
+        }
     </style>
 </head>
 <body>
@@ -537,6 +625,7 @@
             </div>
             <div class="tabs">
                 <button class="tab active" onclick="switchTab('status')">📊 Status</button>
+                <button class="tab" onclick="switchTab('diagnostics')">🔧 Diagnostics</button>
                 <button class="tab" onclick="switchTab('logs')">📄 Logs</button>
             </div>
         </header>
@@ -759,7 +848,91 @@
             </div>
         </div>
 
-        <!-- REMOVED DIAGNOSTICS TAB - functionality moved to Status tab -->
+        <!-- DIAGNOSTICS TAB -->
+        <div id="diagnostics-tab" class="tab-content">
+            <div class="card">
+                <div class="card-header">Quick Tests</div>
+                <div class="test-grid">
+                    <div class="test-button" onclick="runDiagnosticGcode('HEALTH_CHECK')">
+                        <div style="font-size: 24px;">🏥</div>
+                        <div>Health Check</div>
+                    </div>
+                    <div class="test-button" onclick="runDiagnosticGcode('SYSTEM_STATUS')">
+                        <div style="font-size: 24px;">📊</div>
+                        <div>System Status</div>
+                    </div>
+                    <div class="test-button" onclick="runDiagnosticGcode('SHOW_ERRORS LIMIT=10')">
+                        <div style="font-size: 24px;">⚠️</div>
+                        <div>Show Errors</div>
+                    </div>
+                    <div class="test-button" onclick="runDiagnosticGcode('QUERY_ENDSTOPS')">
+                        <div style="font-size: 24px;">🎯</div>
+                        <div>Query Endstops</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">Motor Tests</div>
+                <div style="margin-bottom: 15px;">
+                    <div class="input-group" style="display: inline-block; width: 30%; margin-right: 10px;">
+                        <label>Axis:</label>
+                        <select id="motor-axis">
+                            <option>X</option>
+                            <option>Y</option>
+                            <option>Z</option>
+                        </select>
+                    </div>
+                    <div class="input-group" style="display: inline-block; width: 30%; margin-right: 10px;">
+                        <label>Distance (mm):</label>
+                        <input type="number" id="motor-distance" value="10" min="1" max="50">
+                    </div>
+                    <div style="display: inline-block; vertical-align: bottom;">
+                        <button onclick="runMotorTest()" style="background: #4CAF50; color: white; border: none; padding: 12px 24px; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: 600;">Test Motor</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">Heater Tests</div>
+                <div style="margin-bottom: 15px;">
+                    <div class="input-group" style="display: inline-block; width: 30%; margin-right: 10px;">
+                        <label>Heater:</label>
+                        <select id="heater-name">
+                            <option>extruder</option>
+                            <option>heater_bed</option>
+                        </select>
+                    </div>
+                    <div class="input-group" style="display: inline-block; width: 30%; margin-right: 10px;">
+                        <label>Target Temp (°C):</label>
+                        <input type="number" id="heater-temp" value="50" min="30" max="100">
+                    </div>
+                    <div style="display: inline-block; vertical-align: bottom;">
+                        <button onclick="runHeaterTest()" style="background: #4CAF50; color: white; border: none; padding: 12px 24px; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: 600;">Test Heater</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">Custom G-code Command</div>
+                <div style="margin-bottom: 15px;">
+                    <div class="input-group">
+                        <input type="text" id="custom-gcode" placeholder="Enter G-code command (e.g., G28 X Y)" style="display: inline-block; width: 70%; margin-right: 10px;">
+                        <button onclick="runCustomDiagnosticGcode()" style="display: inline-block; background: #4CAF50; color: white; border: none; padding: 12px 24px; border-radius: 4px; cursor: pointer; font-size: 16px; font-weight: 600;">Execute</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    Console Output
+                    <button onclick="clearDiagnosticsConsole()" style="float: right; padding: 6px 12px; font-size: 14px; background: #666; color: white; border: none; border-radius: 4px; cursor: pointer;">Clear</button>
+                </div>
+                <div class="diagnostics-console" id="diagnostics-console">
+                    <div class="console-line info">Ready to run diagnostics...</div>
+                </div>
+            </div>
+        </div>
 
         <!-- LOGS TAB -->
         <div id="logs-tab" class="tab-content">
@@ -1579,13 +1752,93 @@
             URL.revokeObjectURL(url);
         }
 
+        // Diagnostics functions
+        function logDiagnostic(message, type = 'info') {
+            const console = document.getElementById('diagnostics-console');
+            const line = document.createElement('div');
+            line.className = `console-line ${type}`;
+            const timestamp = new Date().toLocaleTimeString();
+            line.textContent = `[${timestamp}] ${message}`;
+            console.appendChild(line);
+            console.scrollTop = console.scrollHeight;
+        }
+
+        function clearDiagnosticsConsole() {
+            document.getElementById('diagnostics-console').innerHTML = '<div class="console-line info">Console cleared.</div>';
+        }
+
+        async function runDiagnosticGcode(command) {
+            try {
+                logDiagnostic(`> ${command}`, 'command');
+
+                const response = await fetch(`${MOONRAKER_URL}/printer/gcode/script?script=${encodeURIComponent(command)}`, {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+
+                if (data.result === 'ok') {
+                    logDiagnostic('Command executed successfully', 'success');
+
+                    // Wait a bit and fetch recent console output
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await fetchDiagnosticConsoleOutput();
+                } else {
+                    logDiagnostic('Command failed', 'error');
+                }
+
+            } catch (error) {
+                logDiagnostic(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function fetchDiagnosticConsoleOutput() {
+            try {
+                // Fetch recent G-code responses
+                const response = await fetch(`${MOONRAKER_URL}/server/gcode_store?count=20`);
+                const data = await response.json();
+
+                if (data.result && data.result.gcode_store) {
+                    const messages = data.result.gcode_store;
+                    messages.slice(-10).forEach(msg => {
+                        if (msg.message && !msg.message.startsWith('//')) {
+                            const type = msg.type === 'response' ? 'info' : 'info';
+                            logDiagnostic(msg.message, type);
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error('Failed to fetch console output:', error);
+            }
+        }
+
+        function runMotorTest() {
+            const axis = document.getElementById('motor-axis').value;
+            const distance = document.getElementById('motor-distance').value;
+            runDiagnosticGcode(`TEST_MOTORS AXIS=${axis} DISTANCE=${distance}`);
+        }
+
+        function runHeaterTest() {
+            const heater = document.getElementById('heater-name').value;
+            const temp = document.getElementById('heater-temp').value;
+            runDiagnosticGcode(`TEST_HEATERS HEATER=${heater} TEMP=${temp}`);
+        }
+
+        function runCustomDiagnosticGcode() {
+            const command = document.getElementById('custom-gcode').value.trim();
+            if (command) {
+                runDiagnosticGcode(command);
+                document.getElementById('custom-gcode').value = '';
+            }
+        }
+
         // Event listeners
         document.addEventListener('DOMContentLoaded', () => {
             init();
 
             document.getElementById('custom-gcode').addEventListener('keypress', (e) => {
                 if (e.key === 'Enter') {
-                    runCustomGcode();
+                    runCustomDiagnosticGcode();
                 }
             });
 

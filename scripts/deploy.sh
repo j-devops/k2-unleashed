@@ -330,7 +330,7 @@ if [ "$DEPLOY_WEB" = true ]; then
     echo -e "${BLUE}[3/3] Deploying Web Dashboard...${NC}"
 
     # Create web directory
-    WEB_DIR="/usr/data/www/k2-monitor"
+    WEB_DIR="/usr/data/www/k2"
     echo "  Creating web directory..."
     ssh_cmd "mkdir -p $WEB_DIR"
     echo -e "  ${GREEN}✓${NC} Created $WEB_DIR"
@@ -338,7 +338,6 @@ if [ "$DEPLOY_WEB" = true ]; then
     # Copy HTML files
     echo "  Copying web files..."
     scp_cmd web_dashboard/index.html ${PRINTER_USER}@${PRINTER_HOST}:${WEB_DIR}/
-    scp_cmd web_dashboard/diagnostics.html ${PRINTER_USER}@${PRINTER_HOST}:${WEB_DIR}/
     echo -e "  ${GREEN}✓${NC} Web files deployed"
 
     # Fix file permissions so nginx can read them
@@ -348,15 +347,15 @@ if [ "$DEPLOY_WEB" = true ]; then
 
     # Configure nginx to serve the dashboard
     echo "  Configuring nginx..."
-    if ! ssh_cmd "grep -q '/k2-monitor/' /etc/nginx/nginx.conf" 2>/dev/null; then
+    if ! ssh_cmd "grep -q '/k2/' /etc/nginx/nginx.conf" 2>/dev/null; then
         # Backup nginx config
         ssh_cmd "cp /etc/nginx/nginx.conf /etc/nginx/nginx.conf.backup 2>/dev/null || true"
 
         # Download, modify, and upload nginx config
         scp_cmd ${PRINTER_USER}@${PRINTER_HOST}:/etc/nginx/nginx.conf /tmp/nginx.conf.k2 2>/dev/null
 
-        # Add k2-monitor location block using awk
-        awk '/location = \/index.html/ {print; print ""; print "        location /k2-monitor/ {"; print "            alias /usr/data/www/k2-monitor/;"; print "            index index.html;"; print "            add_header Cache-Control \"no-store, no-cache, must-revalidate\";"; print "        }"; next}1' /tmp/nginx.conf.k2 > /tmp/nginx.conf.k2.new
+        # Add k2 location block using awk
+        awk '/location = \/index.html/ {print; print ""; print "        location /k2/ {"; print "            alias /usr/data/www/k2/;"; print "            index index.html;"; print "            add_header Cache-Control \"no-store, no-cache, must-revalidate\";"; print "        }"; next}1' /tmp/nginx.conf.k2 > /tmp/nginx.conf.k2.new
 
         # Upload and test
         scp_cmd /tmp/nginx.conf.k2.new ${PRINTER_USER}@${PRINTER_HOST}:/etc/nginx/nginx.conf
@@ -376,9 +375,8 @@ if [ "$DEPLOY_WEB" = true ]; then
     PRINTER_IP=$(ssh_cmd "hostname -I | awk '{print \$1}'" 2>/dev/null || echo "$PRINTER_HOST")
 
     echo ""
-    echo -e "  ${YELLOW}Web dashboard URLs:${NC}"
-    echo "    Main:        http://${PRINTER_IP}:4408/k2-monitor/"
-    echo "    Diagnostics: http://${PRINTER_IP}:4408/k2-monitor/diagnostics.html"
+    echo -e "  ${YELLOW}Web dashboard URL:${NC}"
+    echo "    http://${PRINTER_IP}:4408/k2/"
     echo ""
     echo -e "  ${GREEN}Access via Fluidd on port 4408${NC}"
 fi
@@ -529,10 +527,9 @@ fi
 
 if [ "$DEPLOY_WEB" = true ]; then
     echo ""
-    echo -e "${GREEN}Web Dashboards:${NC}"
+    echo -e "${GREEN}Web Dashboard:${NC}"
     PRINTER_IP=$(ssh_cmd "hostname -I | awk '{print \$1}'" 2>/dev/null || echo "$PRINTER_HOST")
-    echo "    Main:        http://${PRINTER_IP}:4408/k2-monitor/"
-    echo "    Diagnostics: http://${PRINTER_IP}:4408/k2-monitor/diagnostics.html"
+    echo "    http://${PRINTER_IP}:4408/k2/"
     echo ""
     echo -e "  ${GREEN}Access via same port as Fluidd (4408)${NC}"
 fi

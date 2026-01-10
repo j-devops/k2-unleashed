@@ -168,12 +168,11 @@ if [ "$INSTALL_WEB" = true ]; then
     echo "Installing Web Dashboard..."
 
     # Create web directory
-    WEB_DIR="/usr/data/www/k2-monitor"
+    WEB_DIR="/usr/data/www/k2"
     sudo mkdir -p "$WEB_DIR"
 
     # Copy files
     sudo cp web_dashboard/index.html "$WEB_DIR/"
-    sudo cp web_dashboard/diagnostics.html "$WEB_DIR/"
     echo -e "${GREEN}✓${NC} Web files copied to $WEB_DIR"
 
     echo ""
