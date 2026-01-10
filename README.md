@@ -139,7 +139,7 @@ SHOW_ERRORS LIMIT=10   # Show recent errors
 
 **Web Dashboard:** `http://your-printer-ip:8080/`
 
-**Documentation:** See [specs/WEB_DASHBOARD_DESIGN.md](specs/WEB_DASHBOARD_DESIGN.md)
+**Documentation:** See [specs/WEB_DASHBOARD_DESIGN.md](specs/WEB_DASHBOARD_DESIGN.md) (developer specs)
 
 ---
 
@@ -185,7 +185,7 @@ TEST_PROBE SAMPLES=10           # Test probe accuracy
 
 **Web Interface:** `http://your-printer-ip:8080/diagnostics.html`
 
-**Documentation:** See [specs/DIAGNOSTICS_GUIDE.md](specs/DIAGNOSTICS_GUIDE.md)
+**Documentation:** See [docs_k2-unleashed/DIAGNOSTICS_GUIDE.md](docs_k2-unleashed/DIAGNOSTICS_GUIDE.md) (user guide)
 
 ---
 
@@ -266,13 +266,21 @@ See individual scripts in `scripts/` directory for details.
 
 ## Documentation
 
+### User Guides
 - `README.md` - This file (overview and installation)
-- [specs/BED_LEVELING_GUIDE.md](specs/BED_LEVELING_GUIDE.md) - Precision bed leveling guide
-- [specs/FIRMWARE_ERROR_HANDLING_ANALYSIS.md](specs/FIRMWARE_ERROR_HANDLING_ANALYSIS.md) - Error handling analysis
-- [specs/WEB_DASHBOARD_DESIGN.md](specs/WEB_DASHBOARD_DESIGN.md) - Dashboard architecture and API
-- [specs/DIAGNOSTICS_GUIDE.md](specs/DIAGNOSTICS_GUIDE.md) - Complete diagnostics guide
-- [specs/MONITORING_FIX_SUMMARY.md](specs/MONITORING_FIX_SUMMARY.md) - Monitoring fix technical details
-- [specs/CLI_GUIDE.md](specs/CLI_GUIDE.md) - CLI tool usage guide
+- [docs_k2-unleashed/](docs_k2-unleashed/) - **User documentation directory**
+  - [BED_LEVELING_GUIDE.md](docs_k2-unleashed/BED_LEVELING_GUIDE.md) - Precision bed leveling guide
+  - [DIAGNOSTICS_GUIDE.md](docs_k2-unleashed/DIAGNOSTICS_GUIDE.md) - Complete diagnostics guide
+  - [CLI_GUIDE.md](docs_k2-unleashed/CLI_GUIDE.md) - CLI tool usage guide
+
+### Developer Specs
+- [specs/](specs/) - **Technical specifications directory**
+  - [FIRMWARE_ERROR_HANDLING_ANALYSIS.md](specs/FIRMWARE_ERROR_HANDLING_ANALYSIS.md) - Error handling analysis
+  - [WEB_DASHBOARD_DESIGN.md](specs/WEB_DASHBOARD_DESIGN.md) - Dashboard architecture and API
+  - [MONITORING_FIX_SUMMARY.md](specs/MONITORING_FIX_SUMMARY.md) - Monitoring fix technical details
+  - [IMPLEMENTATION_COMPLETE.md](specs/IMPLEMENTATION_COMPLETE.md) - Implementation status
+
+### Other
 - `web_dashboard/README.md` - Web interface installation
 
 ---

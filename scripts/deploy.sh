@@ -539,14 +539,16 @@ fi
 
 echo ""
 echo -e "${GREEN}Documentation:${NC}"
-echo "  Available in your local directory:"
+echo "  User Guides:"
 echo "    - README.md"
-echo "    - specs/BED_LEVELING_GUIDE.md"
+echo "    - docs_k2-unleashed/BED_LEVELING_GUIDE.md"
+echo "    - docs_k2-unleashed/DIAGNOSTICS_GUIDE.md"
+echo "    - docs_k2-unleashed/CLI_GUIDE.md"
+echo ""
+echo "  Developer Specs:"
 echo "    - specs/FIRMWARE_ERROR_HANDLING_ANALYSIS.md"
 echo "    - specs/WEB_DASHBOARD_DESIGN.md"
-echo "    - specs/DIAGNOSTICS_GUIDE.md"
 echo "    - specs/MONITORING_FIX_SUMMARY.md"
-echo "    - specs/CLI_GUIDE.md"
 echo ""
 
 # Rollback instructions
