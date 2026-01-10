@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>K2 Pro Diagnostics</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        h1 {
+            color: #4CAF50;
+            font-size: 24px;
+        }
+
+        .card {
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .card-header {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #4CAF50;
+            border-bottom: 2px solid #3a3a3a;
+            padding-bottom: 10px;
+        }
+
+        .test-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .test-button {
+            background: #3a3a3a;
+            border: 2px solid #4a4a4a;
+            color: #fff;
+            padding: 15px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-align: center;
+        }
+
+        .test-button:hover:not(:disabled) {
+            background: #4a4a4a;
+            border-color: #4CAF50;
+        }
+
+        .test-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        button:hover:not(:disabled) {
+            background: #45a049;
+        }
+
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+
+        .console {
+            background: #1a1a1a;
+            border: 1px solid #3a3a3a;
+            border-radius: 4px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            max-height: 500px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .console-line {
+            margin: 4px 0;
+            padding: 2px 0;
+        }
+
+        .console-line.info {
+            color: #2196F3;
+        }
+
+        .console-line.success {
+            color: #4CAF50;
+        }
+
+        .console-line.warning {
+            color: #ff9800;
+        }
+
+        .console-line.error {
+            color: #f44336;
+        }
+
+        .console-line.command {
+            color: #9C27B0;
+            font-weight: 600;
+        }
+
+        .input-group {
+            margin: 10px 0;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #999;
+        }
+
+        .input-group input, .input-group select {
+            width: 100%;
+            padding: 8px;
+            background: #1a1a1a;
+            border: 1px solid #3a3a3a;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>K2 Pro Diagnostics</h1>
+            <p style="color: #999; margin-top: 10px;">Run diagnostic tests via G-code commands</p>
+        </header>
+
+        <div class="card">
+            <div class="card-header">Quick Tests</div>
+            <div class="test-grid">
+                <div class="test-button" onclick="runGcode('HEALTH_CHECK')">
+                    <div style="font-size: 24px;">🏥</div>
+                    <div>Health Check</div>
+                </div>
+                <div class="test-button" onclick="runGcode('SYSTEM_STATUS')">
+                    <div style="font-size: 24px;">📊</div>
+                    <div>System Status</div>
+                </div>
+                <div class="test-button" onclick="runGcode('SHOW_ERRORS LIMIT=10')">
+                    <div style="font-size: 24px;">⚠️</div>
+                    <div>Show Errors</div>
+                </div>
+                <div class="test-button" onclick="runGcode('QUERY_ENDSTOPS')">
+                    <div style="font-size: 24px;">🎯</div>
+                    <div>Query Endstops</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">Motor Tests</div>
+            <div style="margin-bottom: 15px;">
+                <div class="input-group" style="display: inline-block; width: 30%; margin-right: 10px;">
+                    <label>Axis:</label>
+                    <select id="motor-axis">
+                        <option>X</option>
+                        <option>Y</option>
+                        <option>Z</option>
+                    </select>
+                </div>
+                <div class="input-group" style="display: inline-block; width: 30%; margin-right: 10px;">
+                    <label>Distance (mm):</label>
+                    <input type="number" id="motor-distance" value="10" min="1" max="50">
+                </div>
+                <div style="display: inline-block; vertical-align: bottom;">
+                    <button onclick="runMotorTest()">Test Motor</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">Heater Tests</div>
+            <div style="margin-bottom: 15px;">
+                <div class="input-group" style="display: inline-block; width: 30%; margin-right: 10px;">
+                    <label>Heater:</label>
+                    <select id="heater-name">
+                        <option>extruder</option>
+                        <option>heater_bed</option>
+                    </select>
+                </div>
+                <div class="input-group" style="display: inline-block; width: 30%; margin-right: 10px;">
+                    <label>Target Temp (°C):</label>
+                    <input type="number" id="heater-temp" value="50" min="30" max="100">
+                </div>
+                <div style="display: inline-block; vertical-align: bottom;">
+                    <button onclick="runHeaterTest()">Test Heater</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">Custom G-code Command</div>
+            <div style="margin-bottom: 15px;">
+                <div class="input-group">
+                    <input type="text" id="custom-gcode" placeholder="Enter G-code command (e.g., G28 X Y)" style="display: inline-block; width: 70%; margin-right: 10px;">
+                    <button onclick="runCustomGcode()" style="display: inline-block;">Execute</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                Console Output
+                <button onclick="clearConsole()" style="float: right; padding: 6px 12px; font-size: 14px;">Clear</button>
+            </div>
+            <div class="console" id="console">
+                <div class="console-line info">Ready to run diagnostics...</div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const MOONRAKER_URL = window.location.hostname ?
+            `http://${window.location.hostname}:7125` :
+            'http://localhost:7125';
+
+        function log(message, type = 'info') {
+            const console = document.getElementById('console');
+            const line = document.createElement('div');
+            line.className = `console-line ${type}`;
+            const timestamp = new Date().toLocaleTimeString();
+            line.textContent = `[${timestamp}] ${message}`;
+            console.appendChild(line);
+            console.scrollTop = console.scrollHeight;
+        }
+
+        function clearConsole() {
+            document.getElementById('console').innerHTML = '<div class="console-line info">Console cleared.</div>';
+        }
+
+        async function runGcode(command) {
+            try {
+                log(`> ${command}`, 'command');
+
+                const response = await fetch(`${MOONRAKER_URL}/printer/gcode/script?script=${encodeURIComponent(command)}`, {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+
+                if (data.result === 'ok') {
+                    log('Command executed successfully', 'success');
+                    
+                    // Wait a bit and fetch recent console output
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await fetchConsoleOutput();
+                } else {
+                    log('Command failed', 'error');
+                }
+
+            } catch (error) {
+                log(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function fetchConsoleOutput() {
+            try {
+                // Fetch recent G-code responses
+                const response = await fetch(`${MOONRAKER_URL}/server/gcode_store?count=20`);
+                const data = await response.json();
+
+                if (data.result && data.result.gcode_store) {
+                    const messages = data.result.gcode_store;
+                    messages.slice(-10).forEach(msg => {
+                        if (msg.message && !msg.message.startsWith('//')) {
+                            const type = msg.type === 'response' ? 'info' : 'info';
+                            log(msg.message, type);
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error('Failed to fetch console output:', error);
+            }
+        }
+
+        function runMotorTest() {
+            const axis = document.getElementById('motor-axis').value;
+            const distance = document.getElementById('motor-distance').value;
+            runGcode(`TEST_MOTORS AXIS=${axis} DISTANCE=${distance}`);
+        }
+
+        function runHeaterTest() {
+            const heater = document.getElementById('heater-name').value;
+            const temp = document.getElementById('heater-temp').value;
+            runGcode(`TEST_HEATERS HEATER=${heater} TEMP=${temp}`);
+        }
+
+        function runCustomGcode() {
+            const command = document.getElementById('custom-gcode').value.trim();
+            if (command) {
+                runGcode(command);
+                document.getElementById('custom-gcode').value = '';
+            }
+        }
+
+        // Allow Enter key to submit custom gcode
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('custom-gcode').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    runCustomGcode();
+                }
+            });
+        });
+    </script>
+</body>
+</html>

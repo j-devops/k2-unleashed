@@ -1,0 +1,1599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>K2 Pro Monitor</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        header {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .header-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+        }
+
+        h1 {
+            color: #4CAF50;
+            font-size: 24px;
+        }
+
+        .connection-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .status-indicator {
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #f44336;
+            animation: pulse 2s infinite;
+        }
+
+        .status-indicator.connected {
+            background: #4CAF50;
+            animation: none;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        .tabs {
+            display: flex;
+            gap: 10px;
+            border-bottom: 2px solid #3a3a3a;
+        }
+
+        .tab {
+            padding: 12px 24px;
+            cursor: pointer;
+            background: transparent;
+            border: none;
+            color: #999;
+            font-size: 16px;
+            font-weight: 500;
+            border-bottom: 3px solid transparent;
+            transition: all 0.3s;
+        }
+
+        .tab:hover {
+            color: #fff;
+            background: #2a2a2a;
+        }
+
+        .tab.active {
+            color: #4CAF50;
+            border-bottom-color: #4CAF50;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .card {
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .card-header {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            color: #4CAF50;
+            border-bottom: 2px solid #3a3a3a;
+            padding-bottom: 10px;
+        }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #3a3a3a;
+        }
+
+        .stat-row:last-child {
+            border-bottom: none;
+        }
+
+        .stat-label {
+            color: #999;
+        }
+
+        .stat-value {
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .stat-value.ok {
+            color: #4CAF50;
+        }
+
+        .stat-value.warning {
+            color: #ff9800;
+        }
+
+        .stat-value.error {
+            color: #f44336;
+        }
+
+        .temp-display {
+            font-size: 24px;
+            font-weight: 700;
+            text-align: center;
+            padding: 10px;
+            background: #1a1a1a;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+
+        .temp-target {
+            font-size: 14px;
+            color: #999;
+            text-align: center;
+        }
+
+        .error-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .error-item {
+            background: #1a1a1a;
+            padding: 10px;
+            margin: 8px 0;
+            border-radius: 4px;
+            border-left: 4px solid #f44336;
+        }
+
+        .error-item.INFO {
+            border-left-color: #2196F3;
+        }
+
+        .error-item.WARNING {
+            border-left-color: #ff9800;
+        }
+
+        .error-time {
+            font-size: 12px;
+            color: #999;
+            margin-bottom: 4px;
+        }
+
+        .error-message {
+            margin-top: 4px;
+            color: #ddd;
+        }
+
+        button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+
+        button:hover:not(:disabled) {
+            background: #45a049;
+        }
+
+        button:active:not(:disabled) {
+            background: #3d8b40;
+        }
+
+        button:disabled {
+            background: #666;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        #loading {
+            text-align: center;
+            padding: 40px;
+            font-size: 18px;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 3px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .badge.standby {
+            background: #2196F3;
+        }
+
+        .badge.printing {
+            background: #4CAF50;
+        }
+
+        .badge.paused {
+            background: #ff9800;
+        }
+
+        .badge.error {
+            background: #f44336;
+        }
+
+        /* Diagnostics styles */
+        .test-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .test-button {
+            background: #3a3a3a;
+            border: 2px solid #4a4a4a;
+            color: #fff;
+            padding: 15px;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.3s;
+            text-align: center;
+        }
+
+        .test-button:hover:not(:disabled) {
+            background: #4a4a4a;
+            border-color: #4CAF50;
+        }
+
+        .test-button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .console {
+            background: #1a1a1a;
+            border: 1px solid #3a3a3a;
+            border-radius: 4px;
+            padding: 15px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            max-height: 500px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .console-line {
+            margin: 4px 0;
+            padding: 2px 0;
+        }
+
+        .console-line.info {
+            color: #2196F3;
+        }
+
+        .console-line.success {
+            color: #4CAF50;
+        }
+
+        .console-line.warning {
+            color: #ff9800;
+        }
+
+        .console-line.error {
+            color: #f44336;
+        }
+
+        .console-line.command {
+            color: #9C27B0;
+            font-weight: 600;
+        }
+
+        .input-group {
+            margin: 10px 0;
+        }
+
+        .input-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #999;
+        }
+
+        .input-group input, .input-group select {
+            width: 100%;
+            padding: 8px;
+            background: #1a1a1a;
+            border: 1px solid #3a3a3a;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 14px;
+        }
+
+        /* CFS Styles */
+        .cfs-box {
+            background: #1a1a1a;
+            border-radius: 6px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+
+        .cfs-box-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #3a3a3a;
+        }
+
+        .cfs-box-title {
+            font-weight: 600;
+            font-size: 16px;
+            color: #4CAF50;
+        }
+
+        .cfs-box-info {
+            font-size: 12px;
+            color: #999;
+        }
+
+        .cfs-slots {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 10px;
+        }
+
+        .cfs-slot {
+            background: #2a2a2a;
+            border-radius: 4px;
+            padding: 10px;
+            border-left: 4px solid #3a3a3a;
+        }
+
+        .cfs-slot.has-material {
+            border-left-color: #4CAF50;
+        }
+
+        .cfs-slot-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .cfs-slot-name {
+            font-weight: 600;
+            font-size: 13px;
+        }
+
+        .cfs-color-swatch {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            border: 2px solid #3a3a3a;
+            display: inline-block;
+        }
+
+        .cfs-slot-material {
+            font-size: 12px;
+            color: #999;
+            margin-bottom: 6px;
+        }
+
+        .cfs-progress {
+            height: 6px;
+            background: #3a3a3a;
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 6px;
+        }
+
+        .cfs-progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #4CAF50, #8BC34A);
+            transition: width 0.3s;
+        }
+
+        .cfs-progress-bar.low {
+            background: linear-gradient(90deg, #ff9800, #ff5722);
+        }
+
+        .cfs-progress-bar.empty {
+            background: #3a3a3a;
+        }
+
+        .cfs-controls {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 8px;
+            margin-top: 12px;
+        }
+
+        .cfs-control-btn {
+            padding: 8px;
+            font-size: 13px;
+            background: #3a3a3a;
+        }
+
+        .cfs-status-badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 3px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .cfs-status-badge.connected {
+            background: #4CAF50;
+            color: #000;
+        }
+
+        .cfs-status-badge.disconnected {
+            background: #666;
+            color: #999;
+        }
+
+        /* Jogging Controls */
+        .jog-btn {
+            background: #3a3a3a;
+            border: 2px solid #4a4a4a;
+            color: #fff;
+            padding: 8px 4px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.2s;
+            min-height: 48px;
+        }
+
+        .jog-btn:hover:not(:disabled) {
+            background: #4a4a4a;
+            border-color: #4CAF50;
+        }
+
+        .jog-btn:active:not(:disabled) {
+            background: #4CAF50;
+            transform: scale(0.95);
+        }
+
+        .jog-distance-btn {
+            flex: 1;
+            background: #2a2a2a;
+            border: 2px solid #3a3a3a;
+            color: #999;
+            padding: 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+
+        .jog-distance-btn.active {
+            background: #4CAF50;
+            border-color: #4CAF50;
+            color: #000;
+        }
+
+        .jog-distance-btn:hover:not(.active) {
+            background: #3a3a3a;
+            border-color: #4CAF50;
+            color: #fff;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="header-top">
+                <div>
+                    <h1>K2 Pro Monitor</h1>
+                    <p style="color: #999; font-size: 14px; margin-top: 5px;">Real-time printer monitoring</p>
+                </div>
+                <div class="connection-status">
+                    <div class="status-indicator" id="status-indicator"></div>
+                    <span id="connection-text">Disconnected</span>
+                </div>
+            </div>
+            <div class="tabs">
+                <button class="tab active" onclick="switchTab('status')">📊 Status</button>
+                <button class="tab" onclick="switchTab('logs')">📄 Logs</button>
+            </div>
+        </header>
+
+        <div id="loading">
+            <p>Loading printer status...</p>
+        </div>
+
+        <!-- STATUS TAB -->
+        <div id="status-tab" class="tab-content active">
+            <div class="grid">
+                <div class="card">
+                    <div class="card-header">Printer State</div>
+                    <div class="stat-row">
+                        <span class="stat-label">Status</span>
+                        <span class="stat-value" id="state-status">Unknown</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Homed Axes</span>
+                        <span class="stat-value" id="state-homed">-</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Print Progress</span>
+                        <span class="stat-value" id="state-progress">0%</span>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">Position</div>
+                    <div class="stat-row">
+                        <span class="stat-label">X</span>
+                        <span class="stat-value" id="pos-x">0.00</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Y</span>
+                        <span class="stat-value" id="pos-y">0.00</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Z</span>
+                        <span class="stat-value" id="pos-z">0.00</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Speed</span>
+                        <span class="stat-value" id="pos-speed">0</span>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">Extruder</div>
+                    <div class="temp-display" id="temp-extruder">--°C</div>
+                    <div class="temp-target" id="temp-extruder-target">Target: --°C</div>
+                    <div class="stat-row">
+                        <span class="stat-label">Power</span>
+                        <span class="stat-value" id="temp-extruder-power">0%</span>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">Heated Bed</div>
+                    <div class="temp-display" id="temp-bed">--°C</div>
+                    <div class="temp-target" id="temp-bed-target">Target: --°C</div>
+                    <div class="stat-row">
+                        <span class="stat-label">Power</span>
+                        <span class="stat-value" id="temp-bed-power">0%</span>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">Sensors</div>
+                    <div class="stat-row">
+                        <span class="stat-label">Filament Detected</span>
+                        <span class="stat-value" id="sensor-filament">Unknown</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Filament Sensor</span>
+                        <span class="stat-value" id="sensor-filament-enabled">Disabled</span>
+                    </div>
+                    <div style="margin: 15px 0; display: flex; gap: 10px;">
+                        <button onclick="toggleFilamentSensor()" id="filament-toggle-btn" style="flex: 1; padding: 8px;">Enable Sensor</button>
+                        <button onclick="queryFilamentSensor()" style="flex: 1; padding: 8px; background: #2196F3;">Query Sensor</button>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Chamber Temp</span>
+                        <span class="stat-value" id="sensor-chamber">--°C</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">MCU Temp</span>
+                        <span class="stat-value" id="sensor-mcu-temp">--°C</span>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">System Resources</div>
+                    <div class="stat-row">
+                        <span class="stat-label">CPU Load</span>
+                        <span class="stat-value" id="sys-cpu">0%</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">MCU Load</span>
+                        <span class="stat-value" id="sys-mcu">0%</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Memory</span>
+                        <span class="stat-value" id="sys-mem">0 MB</span>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <div class="card-header">Enhanced Monitoring</div>
+                    <div class="stat-row">
+                        <span class="stat-label">System Monitor</span>
+                        <span class="stat-value ok" id="monitor-status">Active</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Errors Logged</span>
+                        <span class="stat-value" id="monitor-errors">0</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">Last Update</span>
+                        <span class="stat-value" id="monitor-time">--:--:--</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    CFS Multi-Color System
+                    <button onclick="refreshCFS()" style="float: right; padding: 5px 10px; background: #2196F3;">Refresh</button>
+                </div>
+                <div id="cfs-container">
+                    <p style="color: #999; text-align: center; padding: 20px;">Loading CFS data...</p>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
+                    Recent Events
+                    <button onclick="clearErrors()" style="float: right; padding: 5px 10px;">Clear</button>
+                </div>
+                <div class="error-list" id="error-list">
+                    <p style="color: #999; text-align: center; padding: 20px;">Loading...</p>
+                </div>
+            </div>
+
+            <!-- Position & Jogging -->
+            <div class="card">
+                <div class="card-header">Position & Jogging</div>
+                <div style="display: grid; grid-template-columns: 280px 1fr; gap: 20px;">
+                    <!-- Left: Position Display & Bed Diagram -->
+                    <div>
+                        <!-- Position Readout -->
+                        <div style="display: flex; justify-content: space-around; margin-bottom: 15px; background: #1a1a1a; padding: 10px; border-radius: 6px;">
+                            <div style="text-align: center;">
+                                <div style="color: #666; font-size: 11px; margin-bottom: 4px;">X</div>
+                                <div id="diag-pos-x" style="color: #4CAF50; font-size: 16px; font-weight: 600; font-family: monospace;">--</div>
+                            </div>
+                            <div style="text-align: center;">
+                                <div style="color: #666; font-size: 11px; margin-bottom: 4px;">Y</div>
+                                <div id="diag-pos-y" style="color: #4CAF50; font-size: 16px; font-weight: 600; font-family: monospace;">--</div>
+                            </div>
+                            <div style="text-align: center;">
+                                <div style="color: #666; font-size: 11px; margin-bottom: 4px;">Z</div>
+                                <div id="diag-pos-z" style="color: #4CAF50; font-size: 16px; font-weight: 600; font-family: monospace;">--</div>
+                            </div>
+                        </div>
+
+                        <!-- Bed Diagram -->
+                        <div style="position: relative; width: 250px; height: 250px; background: #1a1a1a; border: 2px solid #3a3a3a; border-radius: 8px; margin: 0 auto;">
+                            <!-- Labels -->
+                            <div style="position: absolute; top: -20px; left: 50%; transform: translateX(-50%); color: #4CAF50; font-size: 11px; font-weight: 600;">FRONT (Y=0)</div>
+                            <div style="position: absolute; bottom: -20px; left: 50%; transform: translateX(-50%); color: #666; font-size: 11px;">BACK (Y=300)</div>
+                            <div style="position: absolute; left: -35px; top: 50%; transform: translateY(-50%); color: #666; font-size: 11px;">X=0</div>
+                            <div style="position: absolute; right: -40px; top: 50%; transform: translateY(-50%); color: #666; font-size: 11px;">X=300</div>
+
+                            <!-- Origin marker -->
+                            <div style="position: absolute; top: 0; left: 0; width: 8px; height: 8px; background: #4CAF50; border-radius: 50%; transform: translate(-4px, -4px);"></div>
+                            <div style="position: absolute; top: -18px; left: -5px; color: #4CAF50; font-size: 10px;">0,0</div>
+
+                            <!-- Position indicator -->
+                            <div id="position-indicator" style="position: absolute; width: 12px; height: 12px; background: #FF9800; border: 2px solid #fff; border-radius: 50%; transform: translate(-6px, -6px); transition: all 0.2s;"></div>
+                        </div>
+                    </div>
+
+                    <!-- Right: Jog Controls -->
+                    <div style="display: flex; flex-direction: column; justify-content: center; gap: 20px;">
+                        <div style="display: flex; align-items: center; gap: 15px; flex-wrap: wrap;">
+                            <button onclick="runGcode('G28')" style="padding: 10px 16px; background: #2196F3; border: none; border-radius: 6px; color: #fff; cursor: pointer; font-weight: 600; font-size: 14px;">🏠 Home All</button>
+
+                            <div style="display: flex; gap: 6px;">
+                                <button onclick="setJogDistance(0.1)" id="jog-0.1" class="jog-distance-btn">0.1</button>
+                                <button onclick="setJogDistance(1)" id="jog-1" class="jog-distance-btn active">1</button>
+                                <button onclick="setJogDistance(10)" id="jog-10" class="jog-distance-btn">10</button>
+                                <button onclick="setJogDistance(50)" id="jog-50" class="jog-distance-btn">50</button>
+                            </div>
+                        </div>
+
+                        <div style="display: flex; gap: 20px; align-items: center;">
+                            <!-- XY Pad -->
+                            <div style="display: grid; grid-template-columns: repeat(3, 50px); gap: 5px;">
+                                <div></div>
+                                <button onclick="jogMove('Y', 1)" class="jog-btn" style="font-size: 20px;">▲</button>
+                                <div></div>
+                                <button onclick="jogMove('X', -1)" class="jog-btn" style="font-size: 20px;">◀</button>
+                                <button onclick="runGcode('G28 X Y')" class="jog-btn" style="background: #444; font-size: 16px;">🏠</button>
+                                <button onclick="jogMove('X', 1)" class="jog-btn" style="font-size: 20px;">▶</button>
+                                <div></div>
+                                <button onclick="jogMove('Y', -1)" class="jog-btn" style="font-size: 20px;">▼</button>
+                                <div></div>
+                            </div>
+
+                            <!-- Z Column -->
+                            <div style="display: flex; flex-direction: column; gap: 5px;">
+                                <button onclick="jogMove('Z', 1)" class="jog-btn" style="width: 55px; height: 50px; font-size: 20px;">▲</button>
+                                <button onclick="runGcode('G28 Z')" class="jog-btn" style="width: 55px; height: 50px; background: #444; font-size: 16px;">🏠</button>
+                                <button onclick="jogMove('Z', -1)" class="jog-btn" style="width: 55px; height: 50px; font-size: 20px;">▼</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- REMOVED DIAGNOSTICS TAB - functionality moved to Status tab -->
+
+        <!-- LOGS TAB -->
+        <div id="logs-tab" class="tab-content">
+            <div class="card">
+                <div class="card-header">
+                    Log Viewer
+                    <div style="float: right; display: flex; gap: 10px; align-items: center;">
+                        <select id="log-file-select" onchange="loadLogFile()" style="padding: 5px 10px; background: #3a3a3a; color: #fff; border: 1px solid #4a4a4a; border-radius: 4px;">
+                            <option value="klippy.log">klippy.log</option>
+                            <option value="moonraker.log">moonraker.log</option>
+                            <option value="system_errors.jsonl">system_errors.jsonl</option>
+                        </select>
+                        <button onclick="loadLogFile()" style="padding: 5px 10px; background: #2196F3;">Refresh</button>
+                        <button onclick="clearLogViewer()" style="padding: 5px 10px;">Clear</button>
+                    </div>
+                </div>
+
+                <div style="margin: 15px 0; display: flex; gap: 10px; align-items: center;">
+                    <input type="text" id="log-search" placeholder="Search logs..." style="flex: 1; padding: 8px; background: #1a1a1a; border: 1px solid #3a3a3a; border-radius: 4px; color: #fff;">
+                    <select id="log-level-filter" onchange="filterLogs()" style="padding: 8px; background: #3a3a3a; color: #fff; border: 1px solid #4a4a4a; border-radius: 4px;">
+                        <option value="all">All Levels</option>
+                        <option value="error">Errors Only</option>
+                        <option value="warning">Warnings Only</option>
+                        <option value="info">Info Only</option>
+                    </select>
+                    <label style="display: flex; align-items: center; gap: 5px; color: #999;">
+                        <input type="checkbox" id="log-autoscroll" checked>
+                        Auto-scroll
+                    </label>
+                    <button onclick="downloadLogs()" style="padding: 8px 12px; background: #4CAF50;">Download</button>
+                </div>
+
+                <div style="background: #1a1a1a; border: 1px solid #3a3a3a; border-radius: 4px; padding: 10px; margin-bottom: 10px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div style="color: #999; font-size: 12px;">
+                            <span id="log-line-count">0 lines</span> |
+                            <span id="log-file-size">0 KB</span> |
+                            <span id="log-last-modified">Last modified: --</span>
+                        </div>
+                        <div style="display: flex; gap: 10px;">
+                            <button onclick="loadLogLines('head')" style="padding: 4px 8px; font-size: 12px; background: #3a3a3a;">↑ First 500</button>
+                            <button onclick="loadLogLines('tail')" style="padding: 4px 8px; font-size: 12px; background: #3a3a3a;">↓ Last 500</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="console" id="log-viewer" style="max-height: 600px; font-size: 12px;">
+                    <div class="console-line info">Select a log file and click Refresh to view logs...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const MOONRAKER_URL = window.location.hostname ?
+            `http://${window.location.hostname}:7125` :
+            'http://localhost:7125';
+        const UPDATE_INTERVAL = 1000;
+
+        let connected = false;
+        let updateTimer = null;
+        let errorHistory = [];
+        let currentTab = 'status';
+        let jogDistance = 1; // Default jog distance in mm
+        const BED_SIZE_X = 300; // K2 Pro bed size
+        const BED_SIZE_Y = 300;
+
+        // Tab switching
+        function switchTab(tabName) {
+            currentTab = tabName;
+            
+            // Update tab buttons
+            document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            // Update tab content
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+            document.getElementById(tabName + '-tab').classList.add('active');
+        }
+
+        // Initialize
+        async function init() {
+            console.log('Initializing dashboard...');
+            console.log('Moonraker URL:', MOONRAKER_URL);
+            await updateStatus();
+            startAutoUpdate();
+        }
+
+        // Update system status
+        async function updateStatus() {
+            try {
+                const objects = [
+                    'print_stats',
+                    'toolhead',
+                    'gcode_move',
+                    'extruder',
+                    'heater_bed',
+                    'system_stats',
+                    'mcu',
+                    'filament_switch_sensor filament_sensor',
+                    'filament_rack',
+                    'temperature_sensor mcu_temp',
+                    'temperature_sensor chamber_temp',
+                    'box'
+                ].join('&');
+
+                const response = await fetch(`${MOONRAKER_URL}/printer/objects/query?${objects}`);
+                const data = await response.json();
+
+                if (data.result && data.result.status) {
+                    setConnected(true);
+                    document.getElementById('loading').style.display = 'none';
+                    updateUI(data.result.status);
+                } else {
+                    setConnected(false);
+                }
+            } catch (error) {
+                console.error('Failed to fetch status:', error);
+                setConnected(false);
+            }
+        }
+
+        // Update UI
+        function updateUI(status) {
+            if (!status) return;
+
+            // Print Stats
+            if (status.print_stats) {
+                const state = status.print_stats.state || 'unknown';
+                document.getElementById('state-status').textContent = state.toUpperCase();
+                document.getElementById('state-status').className = `stat-value badge ${state}`;
+
+                const printTime = status.print_stats.print_duration || 0;
+                const totalTime = status.print_stats.total_duration || 0;
+                let progress = 0;
+                if (totalTime > 0) {
+                    progress = Math.round((printTime / totalTime) * 100);
+                }
+                document.getElementById('state-progress').textContent = `${progress}%`;
+            }
+
+            // Toolhead
+            if (status.toolhead) {
+                const pos = status.toolhead.position || [0, 0, 0, 0];
+                document.getElementById('pos-x').textContent = pos[0].toFixed(2) + ' mm';
+                document.getElementById('pos-y').textContent = pos[1].toFixed(2) + ' mm';
+                document.getElementById('pos-z').textContent = pos[2].toFixed(2) + ' mm';
+
+                const homed = status.toolhead.homed_axes || '';
+                document.getElementById('state-homed').textContent = homed || 'None';
+            }
+
+            // Gcode move
+            if (status.gcode_move) {
+                const speed = status.gcode_move.speed || 0;
+                document.getElementById('pos-speed').textContent = Math.round(speed) + ' mm/s';
+            }
+
+            // Extruder
+            if (status.extruder) {
+                const temp = status.extruder.temperature || 0;
+                const target = status.extruder.target || 0;
+                const power = (status.extruder.power || 0) * 100;
+
+                document.getElementById('temp-extruder').textContent = temp.toFixed(1) + '°C';
+                document.getElementById('temp-extruder-target').textContent = `Target: ${target.toFixed(0)}°C`;
+                document.getElementById('temp-extruder-power').textContent = power.toFixed(1) + '%';
+            }
+
+            // Bed
+            if (status.heater_bed) {
+                const temp = status.heater_bed.temperature || 0;
+                const target = status.heater_bed.target || 0;
+                const power = (status.heater_bed.power || 0) * 100;
+
+                document.getElementById('temp-bed').textContent = temp.toFixed(1) + '°C';
+                document.getElementById('temp-bed-target').textContent = `Target: ${target.toFixed(0)}°C`;
+                document.getElementById('temp-bed-power').textContent = power.toFixed(1) + '%';
+            }
+
+            // System stats
+            if (status.system_stats) {
+                const sysload = status.system_stats.sysload || 0;
+                const memavail = Math.round((status.system_stats.memavail || 0) / 1024);
+
+                document.getElementById('sys-cpu').textContent = sysload.toFixed(2);
+                document.getElementById('sys-mem').textContent = memavail + ' MB';
+            }
+
+            // MCU
+            if (status.mcu) {
+                const mcuLoad = (status.mcu.mcu_awake || 0) * 100;
+                document.getElementById('sys-mcu').textContent = mcuLoad.toFixed(1) + '%';
+            }
+
+            // Filament sensor
+            if (status['filament_switch_sensor filament_sensor']) {
+                const filamentSensor = status['filament_switch_sensor filament_sensor'];
+                const detected = filamentSensor.filament_detected || false;
+                const enabled = filamentSensor.enabled || false;
+
+                const detectedEl = document.getElementById('sensor-filament');
+                detectedEl.textContent = detected ? 'YES' : 'NO';
+                detectedEl.className = detected ? 'stat-value ok' : 'stat-value warning';
+
+                const enabledEl = document.getElementById('sensor-filament-enabled');
+                enabledEl.textContent = enabled ? 'Enabled' : 'Disabled';
+                enabledEl.className = enabled ? 'stat-value ok' : 'stat-value';
+
+                const toggleBtn = document.getElementById('filament-toggle-btn');
+                if (toggleBtn) {
+                    toggleBtn.textContent = enabled ? 'Disable Sensor' : 'Enable Sensor';
+                    toggleBtn.style.background = enabled ? '#ff9800' : '#4CAF50';
+                }
+            }
+
+            // Temperature sensors
+            if (status['temperature_sensor chamber_temp']) {
+                const chamberTemp = status['temperature_sensor chamber_temp'].temperature || 0;
+                document.getElementById('sensor-chamber').textContent = chamberTemp.toFixed(1) + '°C';
+            }
+
+            if (status['temperature_sensor mcu_temp']) {
+                const mcuTemp = status['temperature_sensor mcu_temp'].temperature || 0;
+                document.getElementById('sensor-mcu-temp').textContent = mcuTemp.toFixed(1) + '°C';
+            }
+
+            // CFS Multi-Color System
+            if (status.box) {
+                renderCFS(status.box);
+            }
+
+            // Update position display on diagram
+            updatePositionDisplay(status);
+
+            const now = new Date();
+            document.getElementById('monitor-time').textContent = now.toLocaleTimeString();
+        }
+
+        // Update monitoring info
+        function updateMonitorInfo(monitorData) {
+            if (!monitorData) return;
+
+            const errorCount = monitorData.error_count || 0;
+            document.getElementById('monitor-errors').textContent = errorCount;
+
+            if (monitorData.last_error) {
+                const exists = errorHistory.find(e =>
+                    e.timestamp === monitorData.last_error.timestamp &&
+                    e.code === monitorData.last_error.code
+                );
+
+                if (!exists) {
+                    errorHistory.unshift(monitorData.last_error);
+                    if (errorHistory.length > 20) errorHistory.pop();
+                    updateErrorDisplay();
+                }
+            }
+        }
+
+        // Update error display
+        function updateErrorDisplay() {
+            const errorList = document.getElementById('error-list');
+
+            if (errorHistory.length === 0) {
+                errorList.innerHTML = '<p style="color: #999; text-align: center; padding: 20px;">No errors logged</p>';
+                return;
+            }
+
+            errorList.innerHTML = errorHistory.map(err => {
+                const time = new Date(err.timestamp * 1000).toLocaleTimeString();
+                return `
+                    <div class="error-item ${err.severity}">
+                        <div class="error-time">${time}</div>
+                        <strong>${err.severity}</strong> [${err.code}]
+                        <div class="error-message">${err.message}</div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Render CFS Multi-Color System
+        function renderCFS(boxData) {
+            if (!boxData) {
+                document.getElementById('cfs-container').innerHTML =
+                    '<p style="color: #999; text-align: center; padding: 20px;">CFS not available</p>';
+                return;
+            }
+
+            const materialTypes = {
+                '008001': 'PLA',
+                '006001': 'PETG',
+                '101001': 'PLA',
+                '003001': 'ABS',
+                '004001': 'TPU'
+            };
+
+            let html = '';
+
+            // Render each box (T1-T4)
+            ['T1', 'T2', 'T3', 'T4'].forEach(boxName => {
+                const box = boxData[boxName];
+                if (!box || box.state === 'None') return;
+
+                const connected = box.state === 'connect';
+                const statusClass = connected ? 'connected' : 'disconnected';
+                const statusText = connected ? 'Connected' : 'Disconnected';
+
+                html += `
+                    <div class="cfs-box">
+                        <div class="cfs-box-header">
+                            <div class="cfs-box-title">Box ${boxName}</div>
+                            <div>
+                                <span class="cfs-status-badge ${statusClass}">${statusText}</span>
+                                <span class="cfs-box-info" style="margin-left: 10px;">
+                                    ${box.temperature || '--'}°C | ${box.dry_and_humidity || '--'}% RH
+                                </span>
+                            </div>
+                        </div>
+                        <div class="cfs-slots">
+                `;
+
+                // Render each slot (A, B, C, D)
+                ['A', 'B', 'C', 'D'].forEach((slot, index) => {
+                    const colorValue = box.color_value ? box.color_value[index] : null;
+                    const materialType = box.material_type ? box.material_type[index] : null;
+                    const remainLen = box.remain_len ? parseInt(box.remain_len[index]) : 0;
+
+                    const hasMaterial = colorValue && materialType;
+                    const materialName = materialTypes[materialType] || 'Unknown';
+                    const colorHex = colorValue ? '#' + colorValue.substring(1) : '#3a3a3a';
+
+                    let progressClass = '';
+                    if (remainLen === 0) {
+                        progressClass = 'empty';
+                    } else if (remainLen < 50) {
+                        progressClass = 'low';
+                    }
+
+                    html += `
+                        <div class="cfs-slot ${hasMaterial ? 'has-material' : ''}">
+                            <div class="cfs-slot-header">
+                                <span class="cfs-slot-name">${boxName}${slot}</span>
+                                ${hasMaterial ? `<span class="cfs-color-swatch" style="background: ${colorHex};"></span>` : ''}
+                            </div>
+                            ${hasMaterial ? `
+                                <div class="cfs-slot-material">${materialName}</div>
+                                <div class="cfs-progress">
+                                    <div class="cfs-progress-bar ${progressClass}" style="width: ${remainLen}%;"></div>
+                                </div>
+                                <div style="font-size: 11px; color: #666; margin-top: 4px;">${remainLen}% remaining</div>
+                            ` : '<div class="cfs-slot-material">Empty</div>'}
+                        </div>
+                    `;
+                });
+
+                html += `
+                        </div>
+                        <div class="cfs-controls">
+                            <button class="cfs-control-btn" onclick="runGcode('LOAD_MATERIAL')">Load</button>
+                            <button class="cfs-control-btn" onclick="runGcode('QUIT_MATERIAL')">Unload</button>
+                            <button class="cfs-control-btn" onclick="runGcode('CUT_MATERIAL')">Cut</button>
+                        </div>
+                    </div>
+                `;
+            });
+
+            if (html === '') {
+                html = '<p style="color: #999; text-align: center; padding: 20px;">No CFS boxes connected</p>';
+            }
+
+            document.getElementById('cfs-container').innerHTML = html;
+        }
+
+        // Refresh CFS data
+        async function refreshCFS() {
+            try {
+                const btn = event.target;
+                btn.disabled = true;
+                btn.textContent = 'Refreshing...';
+
+                await fetch(`${MOONRAKER_URL}/printer/gcode/script?script=${encodeURIComponent('BOX_INFO_REFRESH')}`, {
+                    method: 'POST'
+                });
+
+                await new Promise(resolve => setTimeout(resolve, 1000));
+                await updateStatus();
+
+                btn.textContent = 'Refresh';
+                btn.disabled = false;
+            } catch (error) {
+                console.error('Failed to refresh CFS:', error);
+                event.target.disabled = false;
+                event.target.textContent = 'Refresh';
+            }
+        }
+
+        // Clear errors
+        async function clearErrors() {
+            errorHistory = [];
+            updateErrorDisplay();
+        }
+
+        // Connection status
+        function setConnected(isConnected) {
+            connected = isConnected;
+            const indicator = document.getElementById('status-indicator');
+            const text = document.getElementById('connection-text');
+
+            if (isConnected) {
+                indicator.classList.add('connected');
+                text.textContent = 'Connected';
+            } else {
+                indicator.classList.remove('connected');
+                text.textContent = 'Disconnected';
+            }
+        }
+
+        // Auto-update
+        function startAutoUpdate() {
+            if (updateTimer) clearInterval(updateTimer);
+            updateTimer = setInterval(updateStatus, UPDATE_INTERVAL);
+        }
+
+        // Filament sensor controls
+        async function toggleFilamentSensor() {
+            try {
+                const btn = document.getElementById('filament-toggle-btn');
+                const currentText = btn.textContent;
+                const enable = currentText.includes('Enable') ? 1 : 0;
+
+                btn.disabled = true;
+                btn.textContent = 'Processing...';
+
+                const response = await fetch(`${MOONRAKER_URL}/printer/gcode/script?script=${encodeURIComponent('SET_FILAMENT_SENSOR SENSOR=filament_sensor ENABLE=' + enable)}`, {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+
+                if (data.result === 'ok') {
+                    await updateStatus();
+                } else {
+                    alert('Failed to toggle sensor');
+                }
+
+            } catch (error) {
+                console.error('Failed to toggle sensor:', error);
+                alert('Error: ' + error.message);
+            } finally {
+                const btn = document.getElementById('filament-toggle-btn');
+                btn.disabled = false;
+            }
+        }
+
+        async function queryFilamentSensor() {
+            try {
+                const response = await fetch(`${MOONRAKER_URL}/printer/gcode/script?script=${encodeURIComponent('QUERY_FILAMENT_SENSOR SENSOR=filament_sensor')}`, {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+
+                if (data.result === 'ok') {
+                    await new Promise(resolve => setTimeout(resolve, 500));
+
+                    const storeResponse = await fetch(`${MOONRAKER_URL}/server/gcode_store?count=5`);
+                    const storeData = await storeResponse.json();
+
+                    if (storeData.result && storeData.result.gcode_store) {
+                        const messages = storeData.result.gcode_store;
+                        const lastMsg = messages[messages.length - 1];
+                        if (lastMsg && lastMsg.message) {
+                            alert('Sensor Query Result:\n' + lastMsg.message);
+                        }
+                    }
+
+                    await updateStatus();
+                }
+
+            } catch (error) {
+                console.error('Failed to query sensor:', error);
+                alert('Error: ' + error.message);
+            }
+        }
+
+        // DIAGNOSTICS FUNCTIONS
+        function log(message, type = 'info') {
+            const console = document.getElementById('console');
+            const line = document.createElement('div');
+            line.className = `console-line ${type}`;
+            const timestamp = new Date().toLocaleTimeString();
+            line.textContent = `[${timestamp}] ${message}`;
+            console.appendChild(line);
+            console.scrollTop = console.scrollHeight;
+        }
+
+        function clearConsole() {
+            document.getElementById('console').innerHTML = '<div class="console-line info">Console cleared.</div>';
+        }
+
+        async function runGcode(command) {
+            try {
+                log(`> ${command}`, 'command');
+
+                const response = await fetch(`${MOONRAKER_URL}/printer/gcode/script?script=${encodeURIComponent(command)}`, {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+
+                if (data.result === 'ok') {
+                    log('Command executed successfully', 'success');
+                    
+                    await new Promise(resolve => setTimeout(resolve, 1000));
+                    await fetchConsoleOutput();
+                } else {
+                    log('Command failed', 'error');
+                }
+
+            } catch (error) {
+                log(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        async function fetchConsoleOutput() {
+            try {
+                const response = await fetch(`${MOONRAKER_URL}/server/gcode_store?count=20`);
+                const data = await response.json();
+
+                if (data.result && data.result.gcode_store) {
+                    const messages = data.result.gcode_store;
+                    messages.slice(-10).forEach(msg => {
+                        if (msg.message && !msg.message.startsWith('//')) {
+                            const type = msg.type === 'response' ? 'info' : 'info';
+                            log(msg.message, type);
+                        }
+                    });
+                }
+            } catch (error) {
+                console.error('Failed to fetch console output:', error);
+            }
+        }
+
+        function runMotorTest() {
+            const axis = document.getElementById('motor-axis').value;
+            const distance = document.getElementById('motor-distance').value;
+            runGcode(`TEST_MOTORS AXIS=${axis} DISTANCE=${distance}`);
+        }
+
+        function runHeaterTest() {
+            const heater = document.getElementById('heater-name').value;
+            const temp = document.getElementById('heater-temp').value;
+            runGcode(`TEST_HEATERS HEATER=${heater} TEMP=${temp}`);
+        }
+
+        function runBedMeshCalibrate() {
+            log('Starting bed mesh calibration - this may take 2-3 minutes...', 'info');
+            runGcode('BED_MESH_CALIBRATE');
+        }
+
+        function runBedMeshLoad() {
+            log('Loading default bed mesh profile...', 'info');
+            runGcode('BED_MESH_PROFILE LOAD=default');
+        }
+
+        function runBedMeshClear() {
+            log('Clearing bed mesh...', 'info');
+            runGcode('BED_MESH_CLEAR');
+        }
+
+        function runCustomGcode() {
+            const command = document.getElementById('custom-gcode').value.trim();
+            if (command) {
+                runGcode(command);
+                document.getElementById('custom-gcode').value = '';
+            }
+        }
+
+        // JOGGING AND POSITION FUNCTIONS
+        function setJogDistance(distance) {
+            jogDistance = distance;
+            // Update button states
+            document.querySelectorAll('.jog-distance-btn').forEach(btn => {
+                btn.classList.remove('active');
+            });
+            document.getElementById(`jog-${distance}`).classList.add('active');
+        }
+
+        function jogMove(axis, direction) {
+            const distance = jogDistance * direction;
+            // Send as single command block - G91 switches to relative, move, G90 switches back to absolute
+            runGcode(`G91\nG1 ${axis}${distance} F6000\nG90`);
+        }
+
+        function updatePositionDisplay(status) {
+            // Use diagnostics tab specific IDs
+            const posX = document.getElementById('diag-pos-x');
+            const posY = document.getElementById('diag-pos-y');
+            const posZ = document.getElementById('diag-pos-z');
+            const indicator = document.getElementById('position-indicator');
+
+            if (!posX || !posY || !posZ) return;
+
+            // Check if we have valid position data
+            if (!status || !status.toolhead || !status.toolhead.position) {
+                posX.textContent = '--';
+                posY.textContent = '--';
+                posZ.textContent = '--';
+                return;
+            }
+
+            const position = status.toolhead.position;
+            if (position.length < 3) {
+                posX.textContent = '--';
+                posY.textContent = '--';
+                posZ.textContent = '--';
+                return;
+            }
+
+            const x = position[0] || 0;
+            const y = position[1] || 0;
+            const z = position[2] || 0;
+
+            // Update position readouts with units
+            posX.textContent = x.toFixed(2) + ' mm';
+            posY.textContent = y.toFixed(2) + ' mm';
+            posZ.textContent = z.toFixed(2) + ' mm';
+
+            // Update position indicator on diagram
+            // Map X and Y to the 250x250px bed diagram
+            // X: 0 to BED_SIZE_X maps to left (0px) to right (250px)
+            // Y: 0 to BED_SIZE_Y maps to top (0px) to bottom (250px)
+            if (indicator) {
+                const pixelX = (x / BED_SIZE_X) * 250;
+                const pixelY = (y / BED_SIZE_Y) * 250;
+                indicator.style.left = pixelX + 'px';
+                indicator.style.top = pixelY + 'px';
+            }
+        }
+
+        // LOG VIEWER FUNCTIONS
+        let currentLogContent = [];
+        let filteredLogContent = [];
+
+        async function loadLogFile() {
+            try {
+                const logFile = document.getElementById('log-file-select').value;
+                const viewer = document.getElementById('log-viewer');
+
+                viewer.innerHTML = '<div class="console-line info">Loading logs...</div>';
+
+                let logText = '';
+
+                // Special handling for system_errors.jsonl - use custom API
+                if (logFile === 'system_errors.jsonl') {
+                    const response = await fetch(`${MOONRAKER_URL}/server/system_monitor/errors?limit=1000`);
+
+                    if (!response.ok) {
+                        viewer.innerHTML = '<div class="console-line error">Failed to load system errors. Module may not be loaded.</div>';
+                        return;
+                    }
+
+                    const data = await response.json();
+
+                    if (data.result && data.result.errors) {
+                        // Convert JSON errors to readable log format
+                        logText = data.result.errors.map(err => {
+                            const timestamp = new Date(err.timestamp * 1000).toISOString();
+                            return `${timestamp} [${err.severity}] ${err.code}: ${err.message}`;
+                        }).join('\n');
+
+                        if (logText === '') {
+                            logText = 'No errors logged yet';
+                        }
+                    } else {
+                        logText = 'No errors available';
+                    }
+                } else {
+                    // Use Moonraker's server.files.get_file API for standard logs
+                    const response = await fetch(`${MOONRAKER_URL}/server/files/logs/${logFile}`);
+
+                    if (!response.ok) {
+                        viewer.innerHTML = '<div class="console-line error">Failed to load log file. File may not exist.</div>';
+                        return;
+                    }
+
+                    logText = await response.text();
+                }
+
+                currentLogContent = logText.split('\n');
+
+                // Update metadata
+                const fileSize = (logText.length / 1024).toFixed(2);
+                document.getElementById('log-line-count').textContent = `${currentLogContent.length} lines`;
+                document.getElementById('log-file-size').textContent = `${fileSize} KB`;
+                document.getElementById('log-last-modified').textContent = `Last modified: ${new Date().toLocaleString()}`;
+
+                filterLogs();
+            } catch (error) {
+                console.error('Failed to load log:', error);
+                document.getElementById('log-viewer').innerHTML =
+                    `<div class="console-line error">Error loading log: ${error.message}</div>`;
+            }
+        }
+
+        async function loadLogLines(mode) {
+            try {
+                const logFile = document.getElementById('log-file-select').value;
+                const viewer = document.getElementById('log-viewer');
+
+                viewer.innerHTML = '<div class="console-line info">Loading logs...</div>';
+
+                // Use SSH command via Moonraker gcode script to get logs
+                let command = mode === 'head' ?
+                    `tail -500 /tmp/${logFile}` :
+                    `tail -500 /tmp/${logFile}`;
+
+                // For now, just load the full file - Moonraker doesn't support partial reads easily
+                await loadLogFile();
+
+            } catch (error) {
+                console.error('Failed to load log lines:', error);
+            }
+        }
+
+        function filterLogs() {
+            const searchTerm = document.getElementById('log-search').value.toLowerCase();
+            const levelFilter = document.getElementById('log-level-filter').value;
+            const viewer = document.getElementById('log-viewer');
+
+            filteredLogContent = currentLogContent.filter(line => {
+                // Search filter
+                if (searchTerm && !line.toLowerCase().includes(searchTerm)) {
+                    return false;
+                }
+
+                // Level filter
+                if (levelFilter !== 'all') {
+                    const lineUpper = line.toUpperCase();
+                    if (levelFilter === 'error' && !lineUpper.includes('ERROR') && !lineUpper.includes('EXCEPTION')) {
+                        return false;
+                    }
+                    if (levelFilter === 'warning' && !lineUpper.includes('WARN')) {
+                        return false;
+                    }
+                    if (levelFilter === 'info' && !lineUpper.includes('INFO')) {
+                        return false;
+                    }
+                }
+
+                return true;
+            });
+
+            displayLogs();
+        }
+
+        function displayLogs() {
+            const viewer = document.getElementById('log-viewer');
+
+            if (filteredLogContent.length === 0) {
+                viewer.innerHTML = '<div class="console-line info">No matching log entries</div>';
+                return;
+            }
+
+            // Display last 500 lines to avoid performance issues
+            const displayLines = filteredLogContent.slice(-500);
+
+            viewer.innerHTML = displayLines.map(line => {
+                let className = 'info';
+                const lineUpper = line.toUpperCase();
+
+                if (lineUpper.includes('ERROR') || lineUpper.includes('EXCEPTION')) {
+                    className = 'error';
+                } else if (lineUpper.includes('WARN')) {
+                    className = 'warning';
+                } else if (lineUpper.includes('INFO')) {
+                    className = 'info';
+                }
+
+                // Escape HTML
+                const escapedLine = line
+                    .replace(/&/g, '&amp;')
+                    .replace(/</g, '&lt;')
+                    .replace(/>/g, '&gt;');
+
+                return `<div class="console-line ${className}">${escapedLine}</div>`;
+            }).join('');
+
+            // Auto-scroll to bottom if enabled
+            if (document.getElementById('log-autoscroll').checked) {
+                viewer.scrollTop = viewer.scrollHeight;
+            }
+        }
+
+        function clearLogViewer() {
+            document.getElementById('log-viewer').innerHTML =
+                '<div class="console-line info">Select a log file and click Refresh to view logs...</div>';
+            currentLogContent = [];
+            filteredLogContent = [];
+            document.getElementById('log-line-count').textContent = '0 lines';
+            document.getElementById('log-file-size').textContent = '0 KB';
+            document.getElementById('log-last-modified').textContent = 'Last modified: --';
+        }
+
+        function downloadLogs() {
+            const logFile = document.getElementById('log-file-select').value;
+            const content = currentLogContent.join('\n');
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = logFile;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        // Event listeners
+        document.addEventListener('DOMContentLoaded', () => {
+            init();
+
+            document.getElementById('custom-gcode').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    runCustomGcode();
+                }
+            });
+
+            // Log search filter
+            document.getElementById('log-search').addEventListener('input', () => {
+                filterLogs();
+            });
+        });
+    </script>
+</body>
+</html>
