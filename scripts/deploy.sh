@@ -539,11 +539,14 @@ fi
 
 echo ""
 echo -e "${GREEN}Documentation:${NC}"
-echo "  Copied to your local directory:"
+echo "  Available in your local directory:"
 echo "    - README.md"
-echo "    - FIRMWARE_ERROR_HANDLING_ANALYSIS.md"
-echo "    - WEB_DASHBOARD_DESIGN.md"
-echo "    - DIAGNOSTICS_GUIDE.md"
+echo "    - specs/BED_LEVELING_GUIDE.md"
+echo "    - specs/FIRMWARE_ERROR_HANDLING_ANALYSIS.md"
+echo "    - specs/WEB_DASHBOARD_DESIGN.md"
+echo "    - specs/DIAGNOSTICS_GUIDE.md"
+echo "    - specs/MONITORING_FIX_SUMMARY.md"
+echo "    - specs/CLI_GUIDE.md"
 echo ""
 
 # Rollback instructions

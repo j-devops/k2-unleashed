@@ -139,7 +139,7 @@ SHOW_ERRORS LIMIT=10   # Show recent errors
 
 **Web Dashboard:** `http://your-printer-ip:8080/`
 
-**Documentation:** See `WEB_DASHBOARD_DESIGN.md`
+**Documentation:** See [specs/WEB_DASHBOARD_DESIGN.md](specs/WEB_DASHBOARD_DESIGN.md)
 
 ---
 
@@ -185,7 +185,7 @@ TEST_PROBE SAMPLES=10           # Test probe accuracy
 
 **Web Interface:** `http://your-printer-ip:8080/diagnostics.html`
 
-**Documentation:** See `DIAGNOSTICS_GUIDE.md`
+**Documentation:** See [specs/DIAGNOSTICS_GUIDE.md](specs/DIAGNOSTICS_GUIDE.md)
 
 ---
 
@@ -200,7 +200,7 @@ Detailed analysis of firmware error handling issues and recommendations.
 - Recommended improvements
 - Practical workarounds
 
-**Documentation:** See `FIRMWARE_ERROR_HANDLING_ANALYSIS.md`
+**Documentation:** See [specs/FIRMWARE_ERROR_HANDLING_ANALYSIS.md](specs/FIRMWARE_ERROR_HANDLING_ANALYSIS.md)
 
 ---
 
@@ -266,10 +266,13 @@ See individual scripts in `scripts/` directory for details.
 
 ## Documentation
 
-- `README.md` - This file
-- `FIRMWARE_ERROR_HANDLING_ANALYSIS.md` - Error handling analysis
-- `WEB_DASHBOARD_DESIGN.md` - Dashboard architecture and API
-- `DIAGNOSTICS_GUIDE.md` - Complete diagnostics guide
+- `README.md` - This file (overview and installation)
+- [specs/BED_LEVELING_GUIDE.md](specs/BED_LEVELING_GUIDE.md) - Precision bed leveling guide
+- [specs/FIRMWARE_ERROR_HANDLING_ANALYSIS.md](specs/FIRMWARE_ERROR_HANDLING_ANALYSIS.md) - Error handling analysis
+- [specs/WEB_DASHBOARD_DESIGN.md](specs/WEB_DASHBOARD_DESIGN.md) - Dashboard architecture and API
+- [specs/DIAGNOSTICS_GUIDE.md](specs/DIAGNOSTICS_GUIDE.md) - Complete diagnostics guide
+- [specs/MONITORING_FIX_SUMMARY.md](specs/MONITORING_FIX_SUMMARY.md) - Monitoring fix technical details
+- [specs/CLI_GUIDE.md](specs/CLI_GUIDE.md) - CLI tool usage guide
 - `web_dashboard/README.md` - Web interface installation
 
 ---
