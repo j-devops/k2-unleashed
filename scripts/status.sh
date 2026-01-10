@@ -51,6 +51,26 @@ fi
 echo -e "${GREEN}✓${NC} Connected"
 echo ""
 
+# Get version information
+echo -e "${BLUE}K2 Unleashed Version:${NC}"
+LOCAL_VERSION="unknown"
+if [ -f "$PROJECT_ROOT/VERSION" ]; then
+    LOCAL_VERSION=$(cat "$PROJECT_ROOT/VERSION")
+fi
+echo -e "  Local:     ${GREEN}${LOCAL_VERSION}${NC}"
+
+REMOTE_VERSION=$(ssh_cmd "cat /usr/data/k2-unleashed/VERSION 2>/dev/null || cat /root/k2-unleashed/VERSION 2>/dev/null || echo 'not installed'" 2>/dev/null)
+if [ "$REMOTE_VERSION" = "not installed" ]; then
+    echo -e "  Installed: ${YELLOW}not installed${NC}"
+    echo -e "  ${YELLOW}Run 'k2-unleashed upgrade' to install${NC}"
+else
+    echo -e "  Installed: ${BLUE}${REMOTE_VERSION}${NC}"
+    if [ "$REMOTE_VERSION" != "$LOCAL_VERSION" ]; then
+        echo -e "  ${YELLOW}⚠ Version mismatch - run 'k2-unleashed upgrade'${NC}"
+    fi
+fi
+echo ""
+
 # Get Klipper status
 echo -e "${BLUE}Klipper Service:${NC}"
 # Try systemctl first, fall back to init.d for OpenWrt/BusyBox

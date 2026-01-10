@@ -108,6 +108,34 @@ fi
 
 echo -e "${GREEN}✓${NC} SSH connection successful"
 
+# Get local version
+LOCAL_VERSION="unknown"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+if [ -f "$SCRIPT_DIR/VERSION" ]; then
+    LOCAL_VERSION=$(cat "$SCRIPT_DIR/VERSION")
+fi
+
+# Check remote version if installed
+echo ""
+echo -e "${YELLOW}Checking installed version...${NC}"
+REMOTE_VERSION=$(ssh_cmd "cat /usr/data/k2-unleashed/VERSION 2>/dev/null || cat /root/k2-unleashed/VERSION 2>/dev/null || echo 'not installed'" 2>/dev/null)
+
+if [ "$REMOTE_VERSION" = "not installed" ]; then
+    echo -e "${YELLOW}K2 Unleashed is not currently installed${NC}"
+    echo -e "Installing version: ${GREEN}${LOCAL_VERSION}${NC}"
+else
+    echo -e "Installed version: ${BLUE}${REMOTE_VERSION}${NC}"
+    echo -e "Local version:     ${GREEN}${LOCAL_VERSION}${NC}"
+
+    if [ "$REMOTE_VERSION" = "$LOCAL_VERSION" ]; then
+        echo -e "${YELLOW}Reinstalling same version${NC}"
+    elif [ "$REMOTE_VERSION" \< "$LOCAL_VERSION" ]; then
+        echo -e "${GREEN}Upgrading${NC} from ${REMOTE_VERSION} to ${LOCAL_VERSION}"
+    else
+        echo -e "${YELLOW}Downgrading${NC} from ${REMOTE_VERSION} to ${LOCAL_VERSION}"
+    fi
+fi
+
 # Detect printer model configuration
 echo ""
 echo -e "${YELLOW}Detecting printer configuration...${NC}"
@@ -259,6 +287,15 @@ if [ "$DEPLOY_MONITOR" = true ]; then
     # Create log directory
     ssh_cmd "mkdir -p /usr/data/printer_data/logs 2>/dev/null || mkdir -p ~/printer_data/logs 2>/dev/null || true"
     echo -e "  ${GREEN}✓${NC} Log directory ready"
+
+    # Deploy VERSION file for tracking
+    echo "  Deploying version info..."
+    ssh_cmd "mkdir -p /usr/data/k2-unleashed 2>/dev/null || mkdir -p ~/k2-unleashed 2>/dev/null || true"
+    if [ -f "$SCRIPT_DIR/VERSION" ]; then
+        scp_cmd "$SCRIPT_DIR/VERSION" ${PRINTER_USER}@${PRINTER_HOST}:${TEMP_DIR}/
+        ssh_cmd "cp $TEMP_DIR/VERSION /usr/data/k2-unleashed/VERSION 2>/dev/null || cp $TEMP_DIR/VERSION ~/k2-unleashed/VERSION"
+        echo -e "  ${GREEN}✓${NC} Version ${LOCAL_VERSION} registered"
+    fi
 fi
 
 # Deploy Diagnostics
@@ -459,6 +496,11 @@ echo ""
 echo "========================================="
 echo "Deployment Complete!"
 echo "========================================="
+echo ""
+
+# Show version deployed
+echo -e "${GREEN}Version Deployed:${NC}"
+echo "  K2 Unleashed ${LOCAL_VERSION}"
 echo ""
 
 # Show backup info
