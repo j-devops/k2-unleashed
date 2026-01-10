@@ -1,14 +1,85 @@
-Welcome to the Creality K2 series Klipper project!
+# K2 Unleashed - Enhanced Monitoring & Diagnostics for Creality K2 Series
 
-This is clone from https://github.com/Klipper3d/klipper/
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+
+---
+
+## ⚠️ DANGER - READ THIS FIRST ⚠️
+
+### THIS SOFTWARE IS NOT FOR THE FAINT OF HEART
+
+**STOP RIGHT NOW** if you:
+- Don't understand SSH, Python, or Klipper configuration
+- Haven't backed up your printer's configuration
+- Can't recover from a bricked printer
+- Aren't comfortable with command-line tools
+- Don't have time to troubleshoot issues
+
+### SERIOUS WARNINGS
+
+🔥 **YOU CAN BRICK YOUR PRINTER** - Incorrect installation or configuration can render your printer inoperable.
+
+🔥 **YOU CAN CAUSE FIRES** - Bugs in temperature monitoring, heater control, or thermal runaway protection could cause fires. Never leave your printer unattended.
+
+🔥 **YOU CAN DAMAGE HARDWARE** - Incorrect motor movements, homing sequences, or probe configurations can physically damage your printer.
+
+🔥 **YOU CAN LOSE DATA** - Installation requires modifying system files. Data loss is possible.
+
+🔥 **YOU VOID WARRANTIES** - Using this software likely voids your Creality warranty. You're on your own.
+
+🔥 **NO SUPPORT GUARANTEE** - This is community software. We help when we can, but we're not your tech support.
+
+🔥 **ACTIVE DEVELOPMENT** - This software is under active development and may contain bugs, incomplete features, and breaking changes.
+
+### WHAT THIS SOFTWARE DOES
+
+This software **directly modifies your printer's control system** by:
+- Installing custom Klipper modules that run with root privileges
+- Modifying printer.cfg which controls ALL printer behavior
+- Querying hardware sensors and actuators in real-time
+- Running web servers on your printer
+- Executing G-code and system commands automatically
+- Storing persistent data on your printer's filesystem
+
+### DISCLAIMER - NO WARRANTY
+
+```
+THIS SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+OTHER DEALINGS IN THE SOFTWARE.
+```
+
+**Translation:** If this software bricks your printer, burns down your house, or causes any other damage - that's YOUR problem, not ours. Use at your own risk.
+
+### YOU HAVE BEEN WARNED
+
+By using this software, you acknowledge that:
+- ✅ You understand the risks
+- ✅ You accept full responsibility for any damage
+- ✅ You have backed up your printer configuration
+- ✅ You can restore your printer if something goes wrong
+- ✅ You won't blame us when things break
+
+**Still here? Good. You're brave (or foolish). Let's continue...**
+
+---
+
+## About This Project
+
+This is a fork of the official Creality K2 series Klipper firmware with community-developed enhancements.
+
+**Base:** Clone from https://github.com/Klipper3d/klipper/
 
 [![Klipper](docs/img/klipper-logo-small.png)](https://www.klipper3d.org/)
 
-https://www.klipper3d.org/
+**Upstream:** https://github.com/CrealityOfficial/K2_Series_Klipper
 
-Used on Creality K2 series devices
-
-We are https://github.com/Klipper3d/klipper/ Updated relevant functions on the basis
+Used on Creality K2 series devices (K2 Plus, K2 Pro, K2 Base)
 
 ## Configuration Files by Model
 
@@ -265,4 +336,34 @@ Improvements welcome! Areas for contribution:
 
 ## License
 
-GPL v3 (same as Klipper)
+K2 Unleashed is licensed under the **GNU General Public License v3.0** (GPLv3), the same license as Klipper.
+
+### What This Means
+
+**You are free to:**
+- ✅ Use this software for any purpose (personal, commercial, etc.)
+- ✅ Study how the program works and modify it
+- ✅ Redistribute copies
+- ✅ Distribute modified versions
+
+**Under these conditions:**
+- ⚠️ You must disclose the source code of any modifications
+- ⚠️ You must license modified versions under GPLv3
+- ⚠️ You must state significant changes made to the software
+- ⚠️ You cannot add additional restrictions
+
+### No Warranty
+
+This program is distributed **WITHOUT ANY WARRANTY**; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
+
+### Full License Text
+
+See [LICENSE](LICENSE) file for the complete GNU General Public License v3.0 text.
+
+### Copyright Notices
+
+- **Klipper base:** Copyright (C) Kevin O'Connor <kevin@koconnor.net>
+- **K2 adaptations:** Copyright (C) Creality
+- **K2 Unleashed enhancements:** Copyright (C) 2025 K2 Unleashed Contributors
+
+All contributions to this project are licensed under GPLv3.

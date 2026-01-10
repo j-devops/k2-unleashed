@@ -1,8 +1,21 @@
 # Diagnostic and Health Check System for K2 Series
 #
-# Copyright (C) 2025
+# Copyright (C) 2025 K2 Unleashed Contributors
 #
-# This file may be distributed under the terms of the GNU GPLv3 license.
+# This file is part of K2 Unleashed.
+#
+# K2 Unleashed is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# K2 Unleashed is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with K2 Unleashed.  If not, see <https://www.gnu.org/licenses/>.
 
 import time
 import logging
