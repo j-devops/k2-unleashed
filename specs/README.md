@@ -83,6 +83,23 @@ Comprehensive technical documentation of the K2 bed mesh leveling system.
 
 ---
 
+### ⚠️ [Bed Mesh Limits & Interactions](BED_MESH_LIMITS_AND_INTERACTIONS.md)
+Deep analysis of compensation limits, flow rate effects, and system interactions.
+
+**Contains:**
+- Actual compensation range (code limit ±45mm, practical limit ±2mm)
+- Why extreme compensation degrades print quality
+- Flow rate effects (Z compensation doesn't adjust E-axis)
+- K2 Plus dual Z motors and z_tilt system operation
+- Execution order: G28 → Z_TILT_ADJUST → BED_MESH_CALIBRATE
+- Z-offset interaction with bed mesh calibration
+- Common issues and troubleshooting
+- Best practices for safe operation
+
+**Audience:** Advanced users, those experiencing first layer issues, contributors optimizing bed leveling
+
+---
+
 ## For End Users
 
 **Looking for guides and how-tos?** See [User Documentation](../docs_k2-unleashed/)
