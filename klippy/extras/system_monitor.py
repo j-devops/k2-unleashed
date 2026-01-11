@@ -82,6 +82,8 @@ class SystemMonitor:
                                    desc=self.cmd_LOG_ERROR_help)
         self.gcode.register_command("SHOW_ERRORS", self.cmd_SHOW_ERRORS,
                                    desc=self.cmd_SHOW_ERRORS_help)
+        self.gcode.register_command("DEBUG_HOMING", self.cmd_DEBUG_HOMING,
+                                   desc=self.cmd_DEBUG_HOMING_help)
 
         # Cached object references (populated in _handle_ready)
         self.print_stats = None
@@ -232,6 +234,14 @@ class SystemMonitor:
         use_cache = self._should_use_cache(eventtime)
 
         if use_cache and self.cache_timestamp > 0:
+            # Log why we're using cache (helps diagnose timing issues)
+            if self.is_homing:
+                logging.info("SystemMonitor: Using cached data during homing (protecting timing)")
+            elif self.is_probing:
+                logging.info("SystemMonitor: Using cached data during probing (protecting timing)")
+            elif self._is_printing():
+                logging.debug("SystemMonitor: Using cached data during printing")
+
             # Return cached status to avoid interfering with print timing
             status = {
                 "timestamp": eventtime,
@@ -242,7 +252,9 @@ class SystemMonitor:
                 "cfs": self.cached_cfs,
                 "resources": self.cached_resources,
                 "cached": True,
-                "cache_age": eventtime - self.cache_timestamp
+                "cache_age": eventtime - self.cache_timestamp,
+                "homing": self.is_homing,
+                "probing": self.is_probing
             }
         else:
             # Safe to query - update cache
@@ -554,6 +566,28 @@ class SystemMonitor:
 
         if not errors:
             gcmd.respond_info("No errors logged")
+
+    cmd_DEBUG_HOMING_help = "Show homing/probing state and timing diagnostics"
+    def cmd_DEBUG_HOMING(self, gcmd):
+        eventtime = self.reactor.monotonic()
+
+        gcmd.respond_info("=== Homing Debug Info ===")
+        gcmd.respond_info("is_homing: %s" % self.is_homing)
+        gcmd.respond_info("is_probing: %s" % self.is_probing)
+        gcmd.respond_info("in_critical_operation: %s" % self._in_critical_operation())
+        gcmd.respond_info("safe_query_mode: %s" % self.safe_query_mode)
+        gcmd.respond_info("would_use_cache: %s" % self._should_use_cache(eventtime))
+        gcmd.respond_info("cache_age: %.3f seconds" % (eventtime - self.cache_timestamp if self.cache_timestamp > 0 else 0))
+        gcmd.respond_info("is_printing: %s" % self._is_printing())
+
+        # Try to get endstop status safely
+        try:
+            query_endstops = self.printer.lookup_object('query_endstops', None)
+            if query_endstops:
+                endstops_status = query_endstops.get_status(eventtime)
+                gcmd.respond_info("last_query: %s" % endstops_status.get('last_query', {}))
+        except Exception as e:
+            gcmd.respond_info("Could not query endstops: %s" % str(e))
 
     def get_status(self, eventtime):
         """Called by Klipper to get status for webhooks"""
