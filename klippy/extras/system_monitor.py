@@ -119,12 +119,12 @@ class SystemMonitor:
     def _handle_homing_begin(self, homing_state):
         """Called when homing/probing begins - CRITICAL: avoid all queries"""
         self.is_homing = True
-        logging.debug("SystemMonitor: Homing started - switching to cache-only mode")
+        logging.info("SystemMonitor: Homing started - switching to cache-only mode")
 
     def _handle_homing_end(self, homing_state):
         """Called when homing/probing ends"""
         self.is_homing = False
-        logging.debug("SystemMonitor: Homing completed - resuming normal queries")
+        logging.info("SystemMonitor: Homing completed - resuming normal queries")
 
     # Error and Event Logging
 
@@ -233,29 +233,47 @@ class SystemMonitor:
         # Check if we should use cached data to avoid blocking
         use_cache = self._should_use_cache(eventtime)
 
-        if use_cache and self.cache_timestamp > 0:
-            # Log why we're using cache (helps diagnose timing issues)
-            if self.is_homing:
-                logging.info("SystemMonitor: Using cached data during homing (protecting timing)")
-            elif self.is_probing:
-                logging.info("SystemMonitor: Using cached data during probing (protecting timing)")
-            elif self._is_printing():
-                logging.debug("SystemMonitor: Using cached data during printing")
+        # CRITICAL: If in critical operation but cache is empty, return minimal status
+        # DO NOT query during homing/probing even if cache is empty!
+        if use_cache:
+            if self.cache_timestamp > 0:
+                # Log why we're using cache (helps diagnose timing issues)
+                # NOTE: Only log during homing/probing to avoid log spam
+                if self.is_homing:
+                    logging.info("SystemMonitor: Using cached data during homing (protecting timing)")
+                elif self.is_probing:
+                    logging.info("SystemMonitor: Using cached data during probing (protecting timing)")
 
-            # Return cached status to avoid interfering with print timing
-            status = {
-                "timestamp": eventtime,
-                "state": self.cached_state,
-                "motion": self.cached_motion,
-                "thermal": self.cached_thermal,
-                "sensors": self.cached_sensors,
-                "cfs": self.cached_cfs,
-                "resources": self.cached_resources,
-                "cached": True,
-                "cache_age": eventtime - self.cache_timestamp,
-                "homing": self.is_homing,
-                "probing": self.is_probing
-            }
+                # Return cached status to avoid interfering with print timing
+                status = {
+                    "timestamp": eventtime,
+                    "state": self.cached_state,
+                    "motion": self.cached_motion,
+                    "thermal": self.cached_thermal,
+                    "sensors": self.cached_sensors,
+                    "cfs": self.cached_cfs,
+                    "resources": self.cached_resources,
+                    "cached": True,
+                    "cache_age": eventtime - self.cache_timestamp,
+                    "homing": self.is_homing,
+                    "probing": self.is_probing
+                }
+            else:
+                # Cache is empty but we're in critical operation - return minimal safe status
+                logging.info("SystemMonitor: Cache empty during critical operation - returning minimal status")
+                status = {
+                    "timestamp": eventtime,
+                    "state": {"state": "homing" if self.is_homing else "probing" if self.is_probing else "unknown"},
+                    "motion": {},
+                    "thermal": {},
+                    "sensors": {},
+                    "cfs": {},
+                    "resources": {},
+                    "cached": True,
+                    "cache_age": -1,
+                    "homing": self.is_homing,
+                    "probing": self.is_probing
+                }
         else:
             # Safe to query - update cache
             status = {
