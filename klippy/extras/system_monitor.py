@@ -58,6 +58,12 @@ class SystemMonitor:
         self.printer.register_event_handler("klippy:shutdown", self._handle_shutdown)
         self.printer.register_event_handler("klippy:disconnect", self._handle_disconnect)
 
+        # Register homing/probing event handlers to avoid queries during critical operations
+        self.printer.register_event_handler("homing:homing_move_begin",
+                                           self._handle_homing_begin)
+        self.printer.register_event_handler("homing:homing_move_end",
+                                           self._handle_homing_end)
+
         # Register webhooks for API access
         webhooks = self.printer.lookup_object('webhooks')
         webhooks.register_endpoint("system_monitor/status",
@@ -83,6 +89,10 @@ class SystemMonitor:
         self.toolhead = None
         self.gcode_move = None
 
+        # Critical operation tracking
+        self.is_homing = False
+        self.is_probing = False
+
         logging.info("SystemMonitor initialized")
 
     def _handle_ready(self):
@@ -103,6 +113,16 @@ class SystemMonitor:
     def _handle_disconnect(self):
         """Called on MCU disconnect"""
         self.log_event("ERROR", "E401", "MCU communication lost")
+
+    def _handle_homing_begin(self, homing_state):
+        """Called when homing/probing begins - CRITICAL: avoid all queries"""
+        self.is_homing = True
+        logging.debug("SystemMonitor: Homing started - switching to cache-only mode")
+
+    def _handle_homing_end(self, homing_state):
+        """Called when homing/probing ends"""
+        self.is_homing = False
+        logging.debug("SystemMonitor: Homing completed - resuming normal queries")
 
     # Error and Event Logging
 
@@ -164,13 +184,25 @@ class SystemMonitor:
                 return False
         return False
 
+    def _in_critical_operation(self):
+        """Check if printer is in a timing-sensitive operation"""
+        # CRITICAL: During homing, any queries can disrupt timing and crash the head
+        if self.is_homing or self.is_probing:
+            return True
+
+        # Also avoid queries during printing
+        if self._is_printing():
+            return True
+
+        return False
+
     def _should_use_cache(self, eventtime):
         """Determine if we should use cached data to avoid blocking"""
         if not self.safe_query_mode:
             return False
 
-        # Use cache if we're printing (sensitive timing)
-        if self._is_printing():
+        # Use cache if we're in critical operation (homing, probing, printing)
+        if self._in_critical_operation():
             return True
 
         # Use cache if it's recent enough
