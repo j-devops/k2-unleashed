@@ -66,6 +66,23 @@ Project completion summary and implementation status.
 
 ---
 
+### 📐 [Bed Mesh Technical Guide](BED_MESH_TECHNICAL_GUIDE.md)
+Comprehensive technical documentation of the K2 bed mesh leveling system.
+
+**Contains:**
+- Configuration breakdown (7x7 probe grid, bicubic interpolation)
+- Calibration process flow (probing → matrix → interpolation → save)
+- Runtime compensation mechanics (bilinear interpolation, fade system)
+- Move splitting for precise contour following
+- Code walkthrough of key functions (calc_z, move, fade)
+- PRTouch integration and temperature compensation
+- Performance optimizations (C++ implementation, NumPy arrays)
+- Practical examples and G-code commands
+
+**Audience:** Firmware developers, contributors working on leveling features, those debugging mesh issues
+
+---
+
 ## For End Users
 
 **Looking for guides and how-tos?** See [User Documentation](../docs_k2-unleashed/)
